@@ -13,7 +13,7 @@ namespace WpfAppTest
     /// <summary>
     /// Interaction logic for App.xaml
     /// </summary>
-    public partial class App : System.Windows.Application
+    public partial class App : Application
     {
         private static Mutex? _mutex = null;
         private const string AppName = "J2EOCRTranslator";
@@ -62,7 +62,7 @@ namespace WpfAppTest
                     }
 
                     // Exit this instance
-                    System.Windows.Application.Current.Shutdown();
+                    Application.Current.Shutdown();
                     return;
                 }
 
@@ -141,7 +141,7 @@ namespace WpfAppTest
 
             DisplayInfo screen = new();
 
-            System.Windows.Point screenCenterPoint = screen.ScaledCenterPoint();
+            Point screenCenterPoint = screen.ScaledCenterPoint();
 
             window.Left = screenCenterPoint.X - (40 / 2);
             window.Top = screenCenterPoint.Y - (40 / 2);

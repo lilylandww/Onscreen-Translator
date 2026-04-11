@@ -5,10 +5,10 @@ using System.Windows.Interop;
 
 internal static class WPFExtensionMethods
 {
-    public static System.Windows.Point GetAbsolutePosition(this Window w)
+    public static Point GetAbsolutePosition(this Window w)
     {
         if (w.WindowState != WindowState.Maximized)
-            return new System.Windows.Point(w.Left, w.Top);
+            return new Point(w.Left, w.Top);
 
         Int32Rect r;
         bool multimonSupported = OSInterop.GetSystemMetrics(OSInterop.SM_CMONITORS) != 0;
@@ -26,6 +26,6 @@ internal static class WPFExtensionMethods
             OSInterop.GetMonitorInfo(new HandleRef(null, hmonitor), info);
             r = new Int32Rect(info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.width, info.rcMonitor.height);
         }
-        return new System.Windows.Point(r.X, r.Y);
+        return new Point(r.X, r.Y);
     }
 }

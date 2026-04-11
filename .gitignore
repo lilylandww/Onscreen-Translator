@@ -8,4 +8,5 @@ __pycache__
 .venv/
 *.log
 plans
+docs/agent-sessions/
 .opencode

@@ -1,4 +1,5 @@
 using Dapplo.Windows.User32;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,12 +22,13 @@ namespace WpfAppTest
         private DisplayInfo? CurrentScreen { get; set; }
         private string? OCRText { get; set; }
         private string? TranslatedText { get; set; }
-        private System.Windows.Controls.TextBox? editTextBox;
+        private TextBox? editTextBox;
         private bool isEditing = false;
         private bool useCustomOCR = true; // Track which OCR model to use (set to true since GLM-OCR is the main OCR)
         private bool captureModeEnabled = true; // Track if capture mode is enabled
         private bool useOllamaTranslation = false; // Track which translation service to use
-        private SystemTrayIcon? _systemTrayIcon; // System tray icon
+        private SystemTrayIcon? _systemTrayIcon;
+        private WindowState _previousWindowState = WindowState.Maximized;
 
         /// <summary>
         /// Gets the translation for the given text using the selected translation service.
@@ -68,7 +70,7 @@ namespace WpfAppTest
             }
         }
 
-        private void HandleKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        private void HandleKeyDown(object sender, KeyEventArgs e)
         {
             KeyPressed(e.Key);
         }
@@ -92,6 +94,7 @@ namespace WpfAppTest
             }
             else
             {
+                _previousWindowState = WindowState;
                 ShowInTaskbar = true;
                 _systemTrayIcon?.Hide();
             }
@@ -100,17 +103,17 @@ namespace WpfAppTest
         private void RestoreFromTray()
         {
             ShowInTaskbar = true;
-            WindowState = WindowState.Maximized;
+            WindowState = _previousWindowState;
             Show();
             Activate();
         }
 
-        private void Canvas_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        private void Canvas_MouseEnter(object sender, MouseEventArgs e)
         {
             TopButtonStack.Visibility = Visibility.Visible;
         }
 
-        private void Canvas_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        private void Canvas_MouseLeave(object sender, MouseEventArgs e)
         {
             TopButtonStack.Visibility = Visibility.Collapsed;
         }
@@ -210,7 +213,7 @@ namespace WpfAppTest
             }
         }
 
-        private void Canvas_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        private void Canvas_MouseMove(object sender, MouseEventArgs e)
         {
             if (!isSelecting) return;
 
@@ -341,7 +344,7 @@ namespace WpfAppTest
                 isEditing = true;
                 // UpdateTextBlock("", new Rectangle(0, 0, 0, 0), 0, 0);
 
-                editTextBox = new System.Windows.Controls.TextBox
+                editTextBox = new TextBox
                 {
                     Text = OCRText,
                     Width = translatedTextBlock.Width,
@@ -371,7 +374,7 @@ namespace WpfAppTest
             {
                 isEditing = true;
 
-                editTextBox = new System.Windows.Controls.TextBox
+                editTextBox = new TextBox
                 {
                     Text = OCRText,
                     Width = translatedTextBlock.ActualHeight, // Use ActualWidth for better sizing
@@ -428,7 +431,7 @@ namespace WpfAppTest
             FinishEditing();
         }
 
-        private void EditTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        private void EditTextBox_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {
@@ -508,7 +511,7 @@ namespace WpfAppTest
             CursorClipper.UnClipCursor();
             GC.Collect();
             MangaOCR.CleanUp();
-            System.Windows.Application.Current.Shutdown();
+            Application.Current.Shutdown();
         }
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -544,11 +547,11 @@ namespace WpfAppTest
         {
             try
             {
-                var iconStream = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Resources/icon.ico"))?.Stream;
+                var iconStream = Application.GetResourceStream(new Uri("pack://application:,,,/Resources/icon.ico"))?.Stream;
                 if (iconStream == null)
                 {
-                    Console.WriteLine("Warning: icon.ico not found, using default icon");
-                    var assemblyLocation = System.Windows.Application.ResourceAssembly?.Location;
+                    Debug.WriteLine("Warning: icon.ico not found, using default icon");
+                    var assemblyLocation = Application.ResourceAssembly?.Location;
                     if (assemblyLocation == null)
                     {
                         throw new InvalidOperationException("Could not get application icon");
@@ -580,7 +583,7 @@ namespace WpfAppTest
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error initializing system tray icon: {ex.Message}");
+                Debug.WriteLine($"Error initializing system tray icon: {ex.Message}");
             }
         }
 
@@ -617,8 +620,6 @@ namespace WpfAppTest
                 editTextBox.LostFocus -= EditTextBox_LostFocus;
                 editTextBox.KeyDown -= EditTextBox_KeyDown;
             }
-
-            _systemTrayIcon?.Dispose();
 
             GC.Collect();
         }
@@ -663,7 +664,7 @@ namespace WpfAppTest
         private void CaptureModeToggleButton_Checked(object sender, RoutedEventArgs e)
         {
             captureModeEnabled = true;
-            vancas.Cursor = System.Windows.Input.Cursors.Cross;
+            vancas.Cursor = Cursors.Cross;
             CaptureModeToggleButton.ToolTip = "Capture Mode Enabled (Click to disable)";
             // Dim the screen to indicate capture mode is active
             BackgroundBrush.Opacity = 0.35;
@@ -672,7 +673,7 @@ namespace WpfAppTest
         private void CaptureModeToggleButton_Unchecked(object sender, RoutedEventArgs e)
         {
             captureModeEnabled = false;
-            vancas.Cursor = System.Windows.Input.Cursors.Arrow;
+            vancas.Cursor = Cursors.Arrow;
             CaptureModeToggleButton.ToolTip = "Capture Mode Disabled (Click to enable)";
             // Make the screen clearer when capture mode is disabled
             BackgroundBrush.Opacity = 0.15;
@@ -695,7 +696,7 @@ namespace WpfAppTest
             PerformSearch();
         }
 
-        private void SearchTermTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        private void SearchTermTextBox_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Enter)
             {
