@@ -5,11 +5,11 @@ namespace WpfAppTest.Utilities;
 
 public static class ApplicationUtilities
 {
-    public static bool GetMousePosition(out System.Windows.Point mousePosition)
+    public static bool GetMousePosition(out Point mousePosition)
     {
         if (GetCursorPos(out POINT point))
         {
-            mousePosition = new System.Windows.Point(point.X, point.Y);
+            mousePosition = new Point(point.X, point.Y);
             return true;
         }
         mousePosition = default;
@@ -48,7 +48,7 @@ public static class CursorClipper
     {
         const double dpi96 = 96.0;
 
-        System.Windows.Point topLeft = element.PointToScreen(new System.Windows.Point(0, 0));
+        Point topLeft = element.PointToScreen(new Point(0, 0));
 
         PresentationSource source = PresentationSource.FromVisual(element);
         if (source?.CompositionTarget == null)
