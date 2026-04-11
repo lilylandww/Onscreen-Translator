@@ -22,7 +22,17 @@ public class OllamaOCRProvider : IOCRProvider, IDisposable
     public string Name => "ollama";
     public string DisplayName => $"Ollama ({Model})";
 
-    public string BaseUrl { get; set; } = "http://localhost:11434";
+    private string _baseUrl = "http://localhost:11434";
+    public string BaseUrl
+    {
+        get => _baseUrl;
+        set
+        {
+            _baseUrl = value;
+            if (_httpClient != null)
+                _httpClient.BaseAddress = new Uri(_baseUrl);
+        }
+    }
     public string Model { get; set; } = "glm-ocr:q8_0";
     public string Prompt { get; set; } = "Extract all text from this image. Return only the text, no explanations or commentary.";
     public int TimeoutSeconds { get; set; } = 120;
@@ -65,7 +75,7 @@ public class OllamaOCRProvider : IOCRProvider, IDisposable
         return _httpClient ??= new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(TimeoutSeconds),
-            BaseAddress = new Uri(BaseUrl)
+            BaseAddress = new Uri(_baseUrl)
         };
     }
 
@@ -95,10 +105,10 @@ public class OllamaOCRProvider : IOCRProvider, IDisposable
         };
 
         var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         for (int attempt = 1; attempt <= MaxRetries; attempt++)
         {
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
             try
             {
                 Debug.WriteLine($"[OllamaOCR] Attempt {attempt}/{MaxRetries}, model={Model}");

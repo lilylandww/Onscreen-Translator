@@ -10,9 +10,10 @@ using System.Threading.Tasks;
 
 namespace WpfAppTest.Providers;
 
-public class OllamaTranslationProvider : ITranslationProvider
+public class OllamaTranslationProvider : ITranslationProvider, IDisposable
 {
     private readonly HttpClient _httpClient = new();
+    private bool _disposed;
 
     public string Name => "ollama";
     public string DisplayName => $"Ollama ({Model})";
@@ -107,5 +108,15 @@ public class OllamaTranslationProvider : ITranslationProvider
         var body = await response.Content.ReadAsStringAsync(ct);
         var tags = JsonSerializer.Deserialize<OllamaTagsResponse>(body);
         return tags?.Models?.Select(m => m.Name ?? "unknown").Where(n => n != "unknown").ToList() ?? new List<string>();
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _httpClient.Dispose();
+            _disposed = true;
+        }
+        GC.SuppressFinalize(this);
     }
 }

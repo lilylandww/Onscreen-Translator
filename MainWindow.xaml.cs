@@ -35,12 +35,13 @@ namespace WpfAppTest
         private IOCRProvider _currentOcrProvider;
         private ITranslationProvider _currentTranslationProvider;
         private readonly List<ITranslationProvider> _translationProviders = new();
+        private bool _initializing = true;
 
-        private string GetTranslatedText(string text)
+        private async Task<string> GetTranslatedTextAsync(string text)
         {
             try
             {
-                return _currentTranslationProvider.TranslateAsync(text).GetAwaiter().GetResult();
+                return await _currentTranslationProvider.TranslateAsync(text);
             }
             catch (Exception ex)
             {
@@ -49,11 +50,11 @@ namespace WpfAppTest
             }
         }
 
-        private string GetOCRText(string imagePath)
+        private async Task<string> GetOCRTextAsync(string imagePath)
         {
             try
             {
-                return _currentOcrProvider.RecognizeTextAsync(imagePath).GetAwaiter().GetResult();
+                return await _currentOcrProvider.RecognizeTextAsync(imagePath);
             }
             catch (Exception ex)
             {
@@ -197,7 +198,7 @@ namespace WpfAppTest
             }
         }
 
-        private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
+        private async void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
             if (!isSelecting) return;
 
@@ -238,9 +239,9 @@ namespace WpfAppTest
             }
             string outputFileName = $"./output/{timeStamp}.png";
             bmp.Save(outputFileName, ImageFormat.Png);
-            string text = GetOCRText(outputFileName);
+            string text = await GetOCRTextAsync(outputFileName);
             OCRText = text;
-            TranslatedText = GetTranslatedText(OCRText);
+            TranslatedText = await GetTranslatedTextAsync(OCRText);
             Console.WriteLine(TranslatedText);
 
             if (TranslatedText != null)
@@ -487,13 +488,13 @@ namespace WpfAppTest
             }
         }
 
-        private void FinishEditing()
+        private async void FinishEditing()
         {
             if (!isEditing) return;
 
             if (editTextBox?.Text == null) return;
             OCRText = editTextBox.Text;
-            TranslatedText = GetTranslatedText(editTextBox.Text);
+            TranslatedText = await GetTranslatedTextAsync(editTextBox.Text);
             translatedTextBlock.Text = TranslatedText;
 
             translatedTextBlock.Visibility = Visibility.Visible;
@@ -552,6 +553,11 @@ namespace WpfAppTest
             }
             CursorClipper.UnClipCursor();
             _ocrProvider.Dispose();
+            foreach (var provider in _translationProviders)
+            {
+                if (provider is IDisposable disposable)
+                    disposable.Dispose();
+            }
             GC.Collect();
             Application.Current.Shutdown();
         }
@@ -616,6 +622,7 @@ namespace WpfAppTest
         {
             await LoadOllamaOcrModelsAsync();
             UpdateTranslationModelVisibility();
+            _initializing = false;
         }
 
         private async Task LoadOllamaOcrModelsAsync()
@@ -777,6 +784,7 @@ namespace WpfAppTest
 
         private void OcrModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_initializing) return;
             if (OcrModelComboBox.SelectedItem is string model)
             {
                 _ocrProvider.Model = model;
@@ -793,6 +801,7 @@ namespace WpfAppTest
 
         private void TranslationProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_initializing) return;
             int idx = TranslationProviderComboBox.SelectedIndex;
             if (idx >= 0 && idx < _translationProviders.Count)
             {
@@ -806,6 +815,7 @@ namespace WpfAppTest
 
         private void TranslationModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_initializing) return;
             if (TranslationModelComboBox.SelectedItem is string model && _currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
             {
                 ollamaProvider.Model = model;

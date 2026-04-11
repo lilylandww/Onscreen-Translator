@@ -32,7 +32,10 @@ public class GoogleTranslationProvider : ITranslationProvider
         };
 
         var content = new FormUrlEncodedContent(form);
-        var response = await _httpClient.PostAsync($"https://translation.googleapis.com/language/translate/v2?key={_apiKey}", content, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://translation.googleapis.com/language/translate/v2");
+        request.Headers.Add("x-goog-api-key", _apiKey);
+        request.Content = content;
+        var response = await _httpClient.SendAsync(request, ct);
 
         var result = await response.Content.ReadAsStringAsync(ct);
 
