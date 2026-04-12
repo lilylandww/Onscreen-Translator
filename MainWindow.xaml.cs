@@ -6,8 +6,11 @@ using System.Windows.Media;
 using System.Windows.Input;
 using WpfAppTest.Utilities;
 using WpfAppTest.Extensions;
+using WpfAppTest.Providers;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Collections.Generic;
+
 namespace WpfAppTest
 {
     /// <summary>
@@ -16,39 +19,79 @@ namespace WpfAppTest
     public partial class MainWindow : Window
     {
         private bool isSelecting = false;
-        private readonly MangaOCR OCR = MangaOCR.Instance; // Use singleton instance
-        private Border selectBorder = new(); // Border for the selection rectangle
+        private Border selectBorder = new();
         private System.Windows.Point clickedPoint = new();
         private DisplayInfo? CurrentScreen { get; set; }
         private string? OCRText { get; set; }
         private string? TranslatedText { get; set; }
         private TextBox? editTextBox;
         private bool isEditing = false;
-        private bool useCustomOCR = true; // Track which OCR model to use (set to true since GLM-OCR is the main OCR)
-        private bool captureModeEnabled = true; // Track if capture mode is enabled
-        private bool useOllamaTranslation = false; // Track which translation service to use
+        private bool captureModeEnabled = true;
         private SystemTrayIcon? _systemTrayIcon;
         private WindowState _previousWindowState = WindowState.Maximized;
 
-        /// <summary>
-        /// Gets the translation for the given text using the selected translation service.
-        /// </summary>
-        /// <param name="text">The text to translate.</param>
-        /// <returns>The translated text.</returns>
-        private string GetTranslatedText(string text)
+        private AppSettings _settings;
+        private OllamaOCRProvider _ocrProvider;
+        private IOCRProvider _currentOcrProvider;
+        private ITranslationProvider _currentTranslationProvider;
+        private readonly List<ITranslationProvider> _translationProviders = new();
+        private bool _initializing = true;
+
+        private async Task<string> GetTranslatedTextAsync(string text)
         {
-            return useOllamaTranslation ? Translate.OllamaTranslate(text) : Translate.GetTranslation(text);
+            try
+            {
+                return await _currentTranslationProvider.TranslateAsync(text);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Translation error: {ex.Message}");
+                return $"Translation Failed: {ex.InnerException?.Message ?? ex.Message}";
+            }
+        }
+
+        private async Task<string> GetOCRTextAsync(string imagePath)
+        {
+            try
+            {
+                return await _currentOcrProvider.RecognizeTextAsync(imagePath);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"OCR error: {ex.Message}");
+                return string.Empty;
+            }
         }
 
         public MainWindow()
         {
             InitializeComponent();
-            Grid grid = new();
+
+            _settings = AppSettings.Load();
+
+            _ocrProvider = new OllamaOCRProvider
+            {
+                BaseUrl = _settings.OllamaBaseUrl,
+                Model = _settings.OcrModel
+            };
+            _currentOcrProvider = _ocrProvider;
+
+            _ = DotNetEnv.Env.Load();
+            var googleApiKey = Environment.GetEnvironmentVariable("GOOGLE_API_KEYS");
+            var deepLApiKey = Environment.GetEnvironmentVariable("DEEPL_API_KEY");
+
+            _translationProviders.Add(new GoogleTranslationProvider(googleApiKey));
+            _translationProviders.Add(new DeepLTranslationProvider(deepLApiKey));
+            _translationProviders.Add(new OllamaTranslationProvider
+            {
+                BaseUrl = _settings.OllamaBaseUrl,
+                Model = _settings.TranslationModel
+            });
+
+            _currentTranslationProvider = _translationProviders.Find(p => p.Name == _settings.TranslationProvider)
+                ?? _translationProviders[0];
 
             StateChanged += Window_StateChanged;
-
-            // Initialize OCR on first use instead of in constructor
-            // This prevents multiple windows during startup in release builds
         }
 
         public void SetImageToBackground()
@@ -155,7 +198,7 @@ namespace WpfAppTest
             }
         }
 
-        private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
+        private async void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
             if (!isSelecting) return;
 
@@ -196,9 +239,9 @@ namespace WpfAppTest
             }
             string outputFileName = $"./output/{timeStamp}.png";
             bmp.Save(outputFileName, ImageFormat.Png);
-            string text = useCustomOCR ? OCR.GetTextFromCustomOCR(outputFileName) : OCR.GetTextFromOCR(outputFileName);
+            string text = await GetOCRTextAsync(outputFileName);
             OCRText = text;
-            TranslatedText = GetTranslatedText(OCRText);
+            TranslatedText = await GetTranslatedTextAsync(OCRText);
             Console.WriteLine(TranslatedText);
 
             if (TranslatedText != null)
@@ -445,13 +488,13 @@ namespace WpfAppTest
             }
         }
 
-        private void FinishEditing()
+        private async void FinishEditing()
         {
             if (!isEditing) return;
 
             if (editTextBox?.Text == null) return;
             OCRText = editTextBox.Text;
-            TranslatedText = GetTranslatedText(editTextBox.Text);
+            TranslatedText = await GetTranslatedTextAsync(editTextBox.Text);
             translatedTextBlock.Text = TranslatedText;
 
             translatedTextBlock.Visibility = Visibility.Visible;
@@ -509,8 +552,13 @@ namespace WpfAppTest
                 editTextBox.KeyDown -= EditTextBox_KeyDown;
             }
             CursorClipper.UnClipCursor();
+            _ocrProvider.Dispose();
+            foreach (var provider in _translationProviders)
+            {
+                if (provider is IDisposable disposable)
+                    disposable.Dispose();
+            }
             GC.Collect();
-            MangaOCR.CleanUp();
             Application.Current.Shutdown();
         }
 
@@ -530,16 +578,108 @@ namespace WpfAppTest
             FullWindow.Rect = new Rect(0, 0, Width, Height);
             KeyDown += HandleKeyDown;
             SetImageToBackground();
-            ModelToggleButton.ToolTip = "Using GLM-OCR (Main OCR Service)";
             SearchToggleButton.ToolTip = "Show Dictionary Search";
             FuriganaToggleButton.ToolTip = "Show Furigana Readings";
-            TranslationToggleButton.ToolTip = "Using Google Translate (Click for Ollama)";
+
+            InitializeTranslationProviderComboBox();
+            InitializeModelComboBoxes();
 
             InitializeSystemTrayIcon();
 
             if (IsMouseOver)
             {
                 TopButtonStack.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void InitializeTranslationProviderComboBox()
+        {
+            TranslationProviderComboBox.Items.Clear();
+            foreach (var provider in _translationProviders)
+            {
+                TranslationProviderComboBox.Items.Add(provider.DisplayName);
+            }
+
+            int selectedIndex = _translationProviders.FindIndex(p => p.Name == _settings.TranslationProvider);
+            TranslationProviderComboBox.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+
+            UpdateTranslationModelVisibility();
+        }
+
+        private void UpdateTranslationModelVisibility()
+        {
+            bool isOllama = _currentTranslationProvider is OllamaTranslationProvider;
+            TranslationModelComboBox.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
+            RefreshTranslationModelsButton.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
+
+            if (isOllama)
+            {
+                LoadOllamaTranslationModels();
+            }
+        }
+
+        private async void InitializeModelComboBoxes()
+        {
+            await LoadOllamaOcrModelsAsync();
+            UpdateTranslationModelVisibility();
+            _initializing = false;
+        }
+
+        private async Task LoadOllamaOcrModelsAsync()
+        {
+            try
+            {
+                var models = await _ocrProvider.ListModelsAsync();
+                OcrModelComboBox.Items.Clear();
+                foreach (var model in models)
+                {
+                    OcrModelComboBox.Items.Add(model);
+                }
+
+                if (!string.IsNullOrEmpty(_settings.OcrModel) && models.Contains(_settings.OcrModel))
+                {
+                    OcrModelComboBox.SelectedItem = _settings.OcrModel;
+                }
+                else if (models.Count > 0)
+                {
+                    OcrModelComboBox.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to load OCR models: {ex.Message}");
+                OcrModelComboBox.Items.Add(_settings.OcrModel);
+                OcrModelComboBox.SelectedIndex = 0;
+            }
+        }
+
+        private async void LoadOllamaTranslationModels()
+        {
+            if (_currentTranslationProvider is not OllamaTranslationProvider ollamaProvider) return;
+
+            try
+            {
+                var models = await ollamaProvider.ListModelsAsync();
+                TranslationModelComboBox.Items.Clear();
+                foreach (var model in models)
+                {
+                    TranslationModelComboBox.Items.Add(model);
+                }
+
+                if (!string.IsNullOrEmpty(_settings.TranslationModel) && models.Contains(_settings.TranslationModel))
+                {
+                    TranslationModelComboBox.SelectedItem = _settings.TranslationModel;
+                }
+                else if (models.Count > 0)
+                {
+                    TranslationModelComboBox.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to load translation models: {ex.Message}");
+                TranslationModelComboBox.Items.Add(_settings.TranslationModel);
+                TranslationModelComboBox.SelectedIndex = 0;
             }
         }
 
@@ -608,8 +748,13 @@ namespace WpfAppTest
             SearchToggleButton.Unchecked -= SearchToggleButton_Unchecked;
             FuriganaToggleButton.Checked -= FuriganaToggleButton_Checked;
             FuriganaToggleButton.Unchecked -= FuriganaToggleButton_Unchecked;
-            TranslationToggleButton.Checked -= TranslationToggleButton_Checked;
-            TranslationToggleButton.Unchecked -= TranslationToggleButton_Unchecked;
+            CaptureModeToggleButton.Checked -= CaptureModeToggleButton_Checked;
+            CaptureModeToggleButton.Unchecked -= CaptureModeToggleButton_Unchecked;
+            OcrModelComboBox.SelectionChanged -= OcrModelComboBox_SelectionChanged;
+            TranslationProviderComboBox.SelectionChanged -= TranslationProviderComboBox_SelectionChanged;
+            TranslationModelComboBox.SelectionChanged -= TranslationModelComboBox_SelectionChanged;
+            RefreshOcrModelsButton.Click -= RefreshOcrModelsButton_Click;
+            RefreshTranslationModelsButton.Click -= RefreshTranslationModelsButton_Click;
             SearchExecuteButton.Click -= SearchExecuteButton_Click;
             SearchTermTextBox.KeyDown -= SearchTermTextBox_KeyDown;
             SearchTermTextBox.TextChanged -= SearchTermTextBox_TextChanged;
@@ -624,16 +769,65 @@ namespace WpfAppTest
             GC.Collect();
         }
 
-        private void ModelToggleButton_Checked(object sender, RoutedEventArgs e)
+        private void SaveSettings()
         {
-            useCustomOCR = true;
-            ModelToggleButton.ToolTip = "Using GLM-OCR (Main OCR Service)";
+            try
+            {
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Settings save error: {ex.Message}");
+                MessageBox.Show($"Failed to save settings: {ex.Message}", "Settings Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
-        private void ModelToggleButton_Unchecked(object sender, RoutedEventArgs e)
+        private void OcrModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            useCustomOCR = false;
-            ModelToggleButton.ToolTip = "Using Legacy OCR (Fallback)";
+            if (_initializing) return;
+            if (OcrModelComboBox.SelectedItem is string model)
+            {
+                _ocrProvider.Model = model;
+                _settings.OcrModel = model;
+                SaveSettings();
+                Debug.WriteLine($"OCR model changed to: {model}");
+            }
+        }
+
+        private void RefreshOcrModelsButton_Click(object sender, RoutedEventArgs e)
+        {
+            _ = LoadOllamaOcrModelsAsync();
+        }
+
+        private void TranslationProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            int idx = TranslationProviderComboBox.SelectedIndex;
+            if (idx >= 0 && idx < _translationProviders.Count)
+            {
+                _currentTranslationProvider = _translationProviders[idx];
+                _settings.TranslationProvider = _currentTranslationProvider.Name;
+                SaveSettings();
+                Debug.WriteLine($"Translation provider changed to: {_currentTranslationProvider.DisplayName}");
+                UpdateTranslationModelVisibility();
+            }
+        }
+
+        private void TranslationModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (TranslationModelComboBox.SelectedItem is string model && _currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
+            {
+                ollamaProvider.Model = model;
+                _settings.TranslationModel = model;
+                SaveSettings();
+                Debug.WriteLine($"Translation model changed to: {model}");
+            }
+        }
+
+        private void RefreshTranslationModelsButton_Click(object sender, RoutedEventArgs e)
+        {
+            LoadOllamaTranslationModels();
         }
 
         private void SearchToggleButton_Checked(object sender, RoutedEventArgs e)
@@ -666,7 +860,6 @@ namespace WpfAppTest
             captureModeEnabled = true;
             vancas.Cursor = Cursors.Cross;
             CaptureModeToggleButton.ToolTip = "Capture Mode Enabled (Click to disable)";
-            // Dim the screen to indicate capture mode is active
             BackgroundBrush.Opacity = 0.35;
         }
 
@@ -675,20 +868,7 @@ namespace WpfAppTest
             captureModeEnabled = false;
             vancas.Cursor = Cursors.Arrow;
             CaptureModeToggleButton.ToolTip = "Capture Mode Disabled (Click to enable)";
-            // Make the screen clearer when capture mode is disabled
             BackgroundBrush.Opacity = 0.15;
-        }
-
-        private void TranslationToggleButton_Checked(object sender, RoutedEventArgs e)
-        {
-            useOllamaTranslation = true;
-            TranslationToggleButton.ToolTip = "Using Ollama gemma3:1b (Click for Google Translate)";
-        }
-
-        private void TranslationToggleButton_Unchecked(object sender, RoutedEventArgs e)
-        {
-            useOllamaTranslation = false;
-            TranslationToggleButton.ToolTip = "Using Google Translate (Click for Ollama)";
         }
 
         private void SearchExecuteButton_Click(object sender, RoutedEventArgs e)
