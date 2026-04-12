@@ -33,6 +33,7 @@
             <Setter Property="HorizontalAlignment" Value="Center" />
             <Setter Property="Width" Value="32" />
             <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
         </Style>
         <Style x:Key="ToolbarComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
             <Setter Property="Height" Value="28" />
@@ -111,7 +112,7 @@
                 Padding="5"
                 Cursor="Hand"
                 ToolTip="Finish Editing">
-                <wpfui:SymbolIcon Symbol="CheckboxChecked24" />
+                <wpfui:SymbolIcon Symbol="CheckboxChecked24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="20" />
                 <Button.Effect>
                     <DropShadowEffect
                         BlurRadius="16"
@@ -168,10 +169,11 @@
                     x:Name="RefreshOcrModelsButton"
                     Width="32"
                     Height="32"
+                    Padding="0"
                     Click="RefreshOcrModelsButton_Click"
                     ToolTip="Refresh OCR Models"
                     Margin="4,0,0,0">
-                    <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14" />
+                    <wpfui:SymbolIcon Symbol="ArrowSync24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </Button>
                 <Separator Width="1" Background="{wpfui:ThemeResource ControlStrokeColorDefaultBrush}" Margin="8,4" />
                 <TextBlock Text="Trans:" VerticalAlignment="Center" FontSize="12" Foreground="{wpfui:ThemeResource TextFillColorSecondaryBrush}" Margin="4,0,4,0" Height="28" />
@@ -192,11 +194,12 @@
                     x:Name="RefreshTranslationModelsButton"
                     Width="32"
                     Height="32"
+                    Padding="0"
                     Click="RefreshTranslationModelsButton_Click"
                     ToolTip="Refresh Translation Models"
                     Visibility="Collapsed"
                     Margin="4,0,0,0">
-                    <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14" />
+                    <wpfui:SymbolIcon Symbol="ArrowSync24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </Button>
                 <Separator Width="1" Background="{wpfui:ThemeResource ControlStrokeColorDefaultBrush}" Margin="8,4" />
                 <ToggleButton
@@ -204,14 +207,14 @@
                     Checked="SearchToggleButton_Checked"
                     Unchecked="SearchToggleButton_Unchecked"
                     ToolTip="Toggle Dictionary Search">
-                    <wpfui:SymbolIcon Symbol="Search24" FontSize="16" />
+                    <wpfui:SymbolIcon Symbol="Search24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
                 <ToggleButton
                     x:Name="FuriganaToggleButton"
                     Checked="FuriganaToggleButton_Checked"
                     Unchecked="FuriganaToggleButton_Unchecked"
                     ToolTip="Toggle Furigana Readings">
-                    <wpfui:SymbolIcon Symbol="ReadingList24" FontSize="16" />
+                    <wpfui:SymbolIcon Symbol="ReadingList24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
                 <ToggleButton
                     x:Name="CaptureModeToggleButton"
@@ -219,7 +222,7 @@
                     Unchecked="CaptureModeToggleButton_Unchecked"
                     IsChecked="True"
                     ToolTip="Capture Mode Enabled (Click to disable)">
-                    <wpfui:SymbolIcon Symbol="Cursor24" FontSize="16" />
+                    <wpfui:SymbolIcon Symbol="Cursor24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
             </StackPanel>
         </Border>
@@ -283,7 +286,7 @@
                                     Click="ClearSearchButton_Click"
                                     Visibility="Collapsed"
                                     Cursor="Hand">
-                                    <wpfui:SymbolIcon Symbol="Circle20" FontSize="14"/>
+                                    <wpfui:SymbolIcon Symbol="Dismiss20" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" />
                                 </Button>
                             </Grid>
                         </Border>
@@ -295,7 +298,7 @@
                         Click="SearchExecuteButton_Click"
                         Cursor="Hand">
                         <StackPanel Orientation="Horizontal" Margin="8,0">
-                            <wpfui:SymbolIcon Symbol="Search24" FontSize="16" Margin="0,0,6,0"/>
+                            <wpfui:SymbolIcon Symbol="Search24" Margin="0,0,6,0" FontSize="20"/>
                             <TextBlock Text="Search" VerticalAlignment="Center" FontSize="12"/>
                         </StackPanel>
                     </Button>
