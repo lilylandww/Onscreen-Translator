@@ -31,11 +31,11 @@ namespace WpfAppTest
         private WindowState _previousWindowState = WindowState.Maximized;
 
         private AppSettings _settings;
-        private OllamaOCRProvider _ocrProvider;
         private IOCRProvider _currentOcrProvider;
         private ITranslationProvider _currentTranslationProvider;
-        private readonly List<ITranslationProvider> _translationProviders = new();
+        private readonly List<ITranslationProvider> _translationProviders = [];
         private bool _initializing = true;
+        private SettingsWindow? _settingsWindow;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -69,24 +69,23 @@ namespace WpfAppTest
 
             _settings = AppSettings.Load();
 
-            _ocrProvider = new OllamaOCRProvider
-            {
-                BaseUrl = _settings.OllamaBaseUrl,
-                Model = _settings.OcrModel
-            };
-            _currentOcrProvider = _ocrProvider;
-
+            // Load API keys from environment for backward compatibility
             _ = DotNetEnv.Env.Load();
-            var googleApiKey = Environment.GetEnvironmentVariable("GOOGLE_API_KEYS");
-            var deepLApiKey = Environment.GetEnvironmentVariable("DEEPL_API_KEY");
+            var envGoogleKey = Environment.GetEnvironmentVariable("GOOGLE_API_KEYS");
+            var envDeepLKey = Environment.GetEnvironmentVariable("DEEPL_API_KEY");
 
-            _translationProviders.Add(new GoogleTranslationProvider(googleApiKey));
-            _translationProviders.Add(new DeepLTranslationProvider(deepLApiKey));
-            _translationProviders.Add(new OllamaTranslationProvider
-            {
-                BaseUrl = _settings.OllamaBaseUrl,
-                Model = _settings.TranslationModel
-            });
+            // Migrate env keys into settings if settings don't have them
+            var googleConfig = _settings.GetProviderConfig("google");
+            if (string.IsNullOrEmpty(googleConfig.ApiKey) && !string.IsNullOrEmpty(envGoogleKey))
+                googleConfig.ApiKey = envGoogleKey;
+
+            var deeplConfig = _settings.GetProviderConfig("deepl");
+            if (string.IsNullOrEmpty(deeplConfig.ApiKey) && !string.IsNullOrEmpty(envDeepLKey))
+                deeplConfig.ApiKey = envDeepLKey;
+
+            // Create providers using the factory
+            _currentOcrProvider = ProviderFactory.CreateOcrProvider(_settings);
+            _translationProviders = ProviderFactory.CreateTranslationProviders(_settings);
 
             _currentTranslationProvider = _translationProviders.Find(p => p.Name == _settings.TranslationProvider)
                 ?? _translationProviders[0];
@@ -121,6 +120,55 @@ namespace WpfAppTest
         private void CancelItemClick(object sender, RoutedEventArgs e)
         {
             Quit();
+        }
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenSettings();
+        }
+
+        private void OpenSettings()
+        {
+            if (_settingsWindow != null && _settingsWindow.IsLoaded)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
+            _settingsWindow = new SettingsWindow(_settings);
+            _settingsWindow.SettingsChanged += OnSettingsChanged;
+            _settingsWindow.Show();
+        }
+
+        private void OnSettingsChanged()
+        {
+            // Reload settings from disk
+            _settings = AppSettings.Load();
+
+            // Dispose old providers
+            if (_currentOcrProvider is IDisposable ocrDisposable)
+                ocrDisposable.Dispose();
+            foreach (var provider in _translationProviders)
+            {
+                if (provider is IDisposable disposable)
+                    disposable.Dispose();
+            }
+            _translationProviders.Clear();
+
+            // Recreate providers with new settings
+            _currentOcrProvider = ProviderFactory.CreateOcrProvider(_settings);
+            var newProviders = ProviderFactory.CreateTranslationProviders(_settings);
+            _translationProviders.AddRange(newProviders);
+            _currentTranslationProvider = _translationProviders.Find(p => p.Name == _settings.TranslationProvider)
+                ?? _translationProviders[0];
+
+            // Refresh toolbar UI
+            _initializing = true;
+            InitializeTranslationProviderComboBox();
+            _ = LoadOllamaOcrModelsAsync();
+            _initializing = false;
+
+            Debug.WriteLine("Settings applied — providers refreshed.");
         }
 
         private void MinimizeWindow()
@@ -552,7 +600,8 @@ namespace WpfAppTest
                 editTextBox.KeyDown -= EditTextBox_KeyDown;
             }
             CursorClipper.UnClipCursor();
-            _ocrProvider.Dispose();
+            if (_currentOcrProvider is IDisposable ocrDisposable)
+                ocrDisposable.Dispose();
             foreach (var provider in _translationProviders)
             {
                 if (provider is IDisposable disposable)
@@ -605,16 +654,55 @@ namespace WpfAppTest
 
             UpdateTranslationModelVisibility();
         }
-
         private void UpdateTranslationModelVisibility()
         {
             bool isOllama = _currentTranslationProvider is OllamaTranslationProvider;
-            TranslationModelComboBox.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
-            RefreshTranslationModelsButton.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
+            bool isOpenAI = _currentTranslationProvider is OpenAITranslationProvider;
+            bool showModels = isOllama || isOpenAI;
+            TranslationModelComboBox.Visibility = showModels ? Visibility.Visible : Visibility.Collapsed;
+            RefreshTranslationModelsButton.Visibility = showModels ? Visibility.Visible : Visibility.Collapsed;
 
             if (isOllama)
             {
                 LoadOllamaTranslationModels();
+            }
+            else if (isOpenAI)
+            {
+                LoadOpenAITranslationModels();
+            }
+        }
+
+        private async void LoadOpenAITranslationModels()
+        {
+            if (_currentTranslationProvider is not OpenAITranslationProvider provider) return;
+
+            try
+            {
+                var models = await provider.ListModelsAsync();
+                TranslationModelComboBox.Items.Clear();
+                foreach (var model in models)
+                {
+                    TranslationModelComboBox.Items.Add(model);
+                }
+
+                var currentModel = provider.Model;
+                if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
+                {
+                    TranslationModelComboBox.SelectedItem = currentModel;
+                }
+                else if (models.Count > 0)
+                {
+                    TranslationModelComboBox.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to load translation models: {ex.Message}");
+                if (_currentTranslationProvider is OpenAITranslationProvider p)
+                {
+                    TranslationModelComboBox.Items.Add(p.Model);
+                    TranslationModelComboBox.SelectedIndex = 0;
+                }
             }
         }
 
@@ -629,16 +717,17 @@ namespace WpfAppTest
         {
             try
             {
-                var models = await _ocrProvider.ListModelsAsync();
+                var models = await ProviderFactory.ListModelsForProvider(_settings.OcrProvider, _settings);
                 OcrModelComboBox.Items.Clear();
                 foreach (var model in models)
                 {
                     OcrModelComboBox.Items.Add(model);
                 }
 
-                if (!string.IsNullOrEmpty(_settings.OcrModel) && models.Contains(_settings.OcrModel))
+                var currentModel = _settings.GetProviderConfig(_settings.OcrProvider).OcrModel;
+                if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
                 {
-                    OcrModelComboBox.SelectedItem = _settings.OcrModel;
+                    OcrModelComboBox.SelectedItem = currentModel;
                 }
                 else if (models.Count > 0)
                 {
@@ -648,8 +737,12 @@ namespace WpfAppTest
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to load OCR models: {ex.Message}");
-                OcrModelComboBox.Items.Add(_settings.OcrModel);
-                OcrModelComboBox.SelectedIndex = 0;
+                var currentModel = _settings.GetProviderConfig(_settings.OcrProvider).OcrModel;
+                if (!string.IsNullOrEmpty(currentModel))
+                {
+                    OcrModelComboBox.Items.Add(currentModel);
+                    OcrModelComboBox.SelectedIndex = 0;
+                }
             }
         }
 
@@ -666,9 +759,10 @@ namespace WpfAppTest
                     TranslationModelComboBox.Items.Add(model);
                 }
 
-                if (!string.IsNullOrEmpty(_settings.TranslationModel) && models.Contains(_settings.TranslationModel))
+                var currentModel = _settings.GetProviderConfig("ollama").TranslationModel;
+                if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
                 {
-                    TranslationModelComboBox.SelectedItem = _settings.TranslationModel;
+                    TranslationModelComboBox.SelectedItem = currentModel;
                 }
                 else if (models.Count > 0)
                 {
@@ -678,7 +772,7 @@ namespace WpfAppTest
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to load translation models: {ex.Message}");
-                TranslationModelComboBox.Items.Add(_settings.TranslationModel);
+                TranslationModelComboBox.Items.Add(_settings.GetProviderConfig("ollama").TranslationModel);
                 TranslationModelComboBox.SelectedIndex = 0;
             }
         }
@@ -701,12 +795,12 @@ namespace WpfAppTest
                     {
                         throw new InvalidOperationException("Could not extract default icon");
                     }
-                    _systemTrayIcon = new SystemTrayIcon(defaultIcon, "J2E OCR Translator", RestoreFromTray, Quit);
+                    _systemTrayIcon = new SystemTrayIcon(defaultIcon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit);
                 }
                 else
                 {
                     using var icon = new System.Drawing.Icon(iconStream);
-                    _systemTrayIcon = new SystemTrayIcon(icon, "J2E OCR Translator", RestoreFromTray, Quit);
+                    _systemTrayIcon = new SystemTrayIcon(icon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit);
                 }
 
                 _systemTrayIcon.OnIconClicked += (s, e) =>
@@ -738,6 +832,7 @@ namespace WpfAppTest
             KeyDown -= HandleKeyDown;
             TopButtonStack.Visibility = Visibility.Collapsed;
             CancelButton.Click -= CancelItemClick;
+            SettingsButton.Click -= SettingsButton_Click;
             vancas.MouseDown -= Canvas_MouseDown;
             vancas.MouseUp -= Canvas_MouseUp;
             vancas.MouseMove -= Canvas_MouseMove;
@@ -787,9 +882,16 @@ namespace WpfAppTest
             if (_initializing) return;
             if (OcrModelComboBox.SelectedItem is string model)
             {
-                _ocrProvider.Model = model;
-                _settings.OcrModel = model;
+                // Update the provider config and recreate provider
+                var config = _settings.GetProviderConfig(_settings.OcrProvider);
+                config.OcrModel = model;
                 SaveSettings();
+
+                // Dispose old provider and create new one
+                if (_currentOcrProvider is IDisposable disposable)
+                    disposable.Dispose();
+                _currentOcrProvider = ProviderFactory.CreateOcrProvider(_settings);
+
                 Debug.WriteLine($"OCR model changed to: {model}");
             }
         }
@@ -812,14 +914,22 @@ namespace WpfAppTest
                 UpdateTranslationModelVisibility();
             }
         }
-
         private void TranslationModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_initializing) return;
-            if (TranslationModelComboBox.SelectedItem is string model && _currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
+            if (TranslationModelComboBox.SelectedItem is string model)
             {
-                ollamaProvider.Model = model;
-                _settings.TranslationModel = model;
+                if (_currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
+                {
+                    ollamaProvider.Model = model;
+                    _settings.GetProviderConfig("ollama").TranslationModel = model;
+                }
+                else if (_currentTranslationProvider is OpenAITranslationProvider openaiProvider)
+                {
+                    openaiProvider.Model = model;
+                    var config = _settings.GetProviderConfig(openaiProvider.Name);
+                    config.TranslationModel = model;
+                }
                 SaveSettings();
                 Debug.WriteLine($"Translation model changed to: {model}");
             }
@@ -827,7 +937,10 @@ namespace WpfAppTest
 
         private void RefreshTranslationModelsButton_Click(object sender, RoutedEventArgs e)
         {
-            LoadOllamaTranslationModels();
+            if (_currentTranslationProvider is OllamaTranslationProvider)
+                LoadOllamaTranslationModels();
+            else if (_currentTranslationProvider is OpenAITranslationProvider)
+                LoadOpenAITranslationModels();
         }
 
         private void SearchToggleButton_Checked(object sender, RoutedEventArgs e)

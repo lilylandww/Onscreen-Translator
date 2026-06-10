@@ -13,6 +13,7 @@ namespace WpfAppTest
         private readonly HwndSource _hwndSource;
         private readonly IntPtr _hIcon;
         private readonly Action? _onRestore;
+        private readonly Action? _onSettings;
         private readonly Action? _onExit;
         private readonly uint _taskbarCreatedMessage;
         private bool _disposed;
@@ -42,7 +43,8 @@ namespace WpfAppTest
         private const int HWND_MESSAGE = -3;
 
         private const int IDM_RESTORE = 1000;
-        private const int IDM_EXIT = 1001;
+        private const int IDM_SETTINGS = 1001;
+        private const int IDM_EXIT = 1002;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct NOTIFYICONDATA
@@ -97,10 +99,11 @@ namespace WpfAppTest
 
         public event EventHandler? OnIconClicked;
 
-        public SystemTrayIcon(Icon icon, string toolTipText, Action? onRestore = null, Action? onExit = null)
+        public SystemTrayIcon(Icon icon, string toolTipText, Action? onRestore = null, Action? onSettings = null, Action? onExit = null)
         {
             _hIcon = icon.Handle;
             _onRestore = onRestore;
+            _onSettings = onSettings;
             _onExit = onExit;
             _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
 
@@ -168,6 +171,9 @@ namespace WpfAppTest
                     case IDM_RESTORE:
                         _onRestore?.Invoke();
                         break;
+                    case IDM_SETTINGS:
+                        _onSettings?.Invoke();
+                        break;
                     case IDM_EXIT:
                         _onExit?.Invoke();
                         break;
@@ -181,6 +187,7 @@ namespace WpfAppTest
         {
             IntPtr hMenu = CreatePopupMenu();
             AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_RESTORE, "Restore");
+            AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_SETTINGS, "Settings...");
             AppendMenu(hMenu, MFT_SEPARATOR, UIntPtr.Zero, "");
             AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_EXIT, "Exit");
 
@@ -193,6 +200,8 @@ namespace WpfAppTest
 
             if (cmd == IDM_RESTORE)
                 _onRestore?.Invoke();
+            else if (cmd == IDM_SETTINGS)
+                _onSettings?.Invoke();
             else if (cmd == IDM_EXIT)
                 _onExit?.Invoke();
         }
