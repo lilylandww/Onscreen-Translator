@@ -130,47 +130,58 @@ public static class ProviderFactory
     }
 
     /// <summary>
-    /// Creates a specific OCR provider with model listing capability (for settings UI).
+    /// Creates a single translation provider by name.
+    /// </summary>
+    public static ITranslationProvider CreateTranslationProvider(AppSettings settings, string providerName)
+    {
+        var config = settings.GetProviderConfig(providerName);
+
+        return providerName switch
+        {
+            "google" => new GoogleTranslationProvider(config.ApiKey),
+            "deepl" => new DeepLTranslationProvider(config.ApiKey),
+            "ollama" => new OllamaTranslationProvider
+            {
+                BaseUrl = config.BaseUrl,
+                Model = config.TranslationModel
+            },
+            "openai" => new OpenAITranslationProvider("openai", "OpenAI")
+            {
+                BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.openai.com/v1" : config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.TranslationModel
+            },
+            "openai-compatible" => new OpenAITranslationProvider("openai-compatible", "OpenAI-Compatible")
+            {
+                BaseUrl = config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.TranslationModel
+            },
+            _ => throw new ArgumentException($"Unknown translation provider: {providerName}", nameof(providerName))
+        };
+    }
+
+    /// <summary>
+    /// Lists available models for the given provider using the IModelListable interface.
     /// </summary>
     public static async Task<List<string>> ListModelsForProvider(string providerName, AppSettings settings, CancellationToken ct = default)
     {
         try
         {
-            var config = settings.GetProviderConfig(providerName);
-
-            switch (providerName)
+            var provider = CreateOcrProvider(settings, providerName);
+            try
             {
-                case "ollama":
-                    {
-                        using var provider = new OllamaOCRProvider
-                        {
-                            BaseUrl = config.BaseUrl,
-                            Model = config.OcrModel
-                        };
-                        return await provider.ListModelsAsync(ct);
-                    }
-                case "openai":
-                    {
-                        using var provider = new OpenAIOCRProvider("openai", "OpenAI")
-                        {
-                            BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.openai.com/v1" : config.BaseUrl,
-                            ApiKey = config.ApiKey,
-                            Model = config.OcrModel
-                        };
-                        return await provider.ListModelsAsync(ct);
-                    }
-                case "openai-compatible":
-                    {
-                        using var provider = new OpenAIOCRProvider("openai-compatible", "OpenAI-Compatible")
-                        {
-                            BaseUrl = config.BaseUrl,
-                            ApiKey = config.ApiKey,
-                            Model = config.OcrModel
-                        };
-                        return await provider.ListModelsAsync(ct);
-                    }
-                default:
-                    return new List<string>();
+                if (provider is IModelListable listable)
+                    return await listable.ListModelsAsync(ct);
+
+                if (provider is OllamaOCRProvider ollamaOcr)
+                    return await ollamaOcr.ListModelsAsync(ct);
+
+                return new List<string>();
+            }
+            finally
+            {
+                (provider as IDisposable)?.Dispose();
             }
         }
         catch

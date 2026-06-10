@@ -251,7 +251,8 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            // Temporarily build settings with current UI values for the specific provider
+            // Collect current UI values first, then build settings
+            CollectOcrSettings();
             var tempSettings = BuildTempSettings();
             var models = await ProviderFactory.ListModelsForProvider(providerName, tempSettings);
 
@@ -278,6 +279,8 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            // Collect current UI values first, then build settings
+            CollectTranslationSettings();
             var tempSettings = BuildTempSettings();
 
             List<string> models;
@@ -508,7 +511,9 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>
-    /// Builds a temporary AppSettings from current UI state (for model listing).
+    /// Builds a temporary AppSettings from current working copy state (for model listing).
+    /// Does NOT mutate _workingCopy. Call CollectOcrSettings/CollectTranslationSettings
+    /// explicitly before calling this if you need current UI values.
     /// </summary>
     private AppSettings BuildTempSettings()
     {
@@ -519,22 +524,6 @@ public partial class SettingsWindow : Window
         };
 
         // Copy working copy providers
-        foreach (var kvp in _workingCopy.Providers)
-        {
-            temp.Providers[kvp.Key] = new ProviderConfig
-            {
-                BaseUrl = kvp.Value.BaseUrl,
-                ApiKey = kvp.Value.ApiKey,
-                OcrModel = kvp.Value.OcrModel,
-                TranslationModel = kvp.Value.TranslationModel
-            };
-        }
-
-        // Overlay with current UI values
-        CollectOcrSettings();
-        CollectTranslationSettings();
-
-        // Copy the collected settings back to temp
         foreach (var kvp in _workingCopy.Providers)
         {
             temp.Providers[kvp.Key] = new ProviderConfig

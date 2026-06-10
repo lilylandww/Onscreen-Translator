@@ -14,7 +14,7 @@ namespace WpfAppTest.Providers;
 /// Translation provider using OpenAI's Chat Completions API.
 /// Also works with OpenAI-compatible endpoints.
 /// </summary>
-public class OpenAITranslationProvider : ITranslationProvider, IDisposable
+public class OpenAITranslationProvider : ITranslationProvider, IModelListable, IDisposable
 {
     private HttpClient? _httpClient;
     private bool _disposed;
@@ -55,64 +55,6 @@ public class OpenAITranslationProvider : ITranslationProvider, IDisposable
         _providerName = providerName;
         _displayName = displayName;
     }
-
-    #region OpenAI API DTOs
-
-    private class ChatRequest
-    {
-        [JsonPropertyName("model")]
-        public string Model { get; set; } = "";
-
-        [JsonPropertyName("messages")]
-        public List<ChatMessage> Messages { get; set; } = new();
-
-        [JsonPropertyName("max_tokens")]
-        public int MaxTokens { get; set; } = 4096;
-
-        [JsonPropertyName("temperature")]
-        public double Temperature { get; set; } = 0.3;
-    }
-
-    private class ChatMessage
-    {
-        [JsonPropertyName("role")]
-        public string Role { get; set; } = "";
-
-        [JsonPropertyName("content")]
-        public string? Content { get; set; }
-    }
-
-    private class ChatResponse
-    {
-        [JsonPropertyName("choices")]
-        public List<Choice>? Choices { get; set; }
-    }
-
-    private class Choice
-    {
-        [JsonPropertyName("message")]
-        public ChatMessageContent? Message { get; set; }
-    }
-
-    private class ChatMessageContent
-    {
-        [JsonPropertyName("content")]
-        public string? Content { get; set; }
-    }
-
-    private class ModelsResponse
-    {
-        [JsonPropertyName("data")]
-        public List<ModelEntry>? Data { get; set; }
-    }
-
-    private class ModelEntry
-    {
-        [JsonPropertyName("id")]
-        public string? Id { get; set; }
-    }
-
-    #endregion
 
     private HttpClient GetClient()
     {

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -9,9 +11,70 @@ namespace WpfAppTest;
 public class ProviderConfig
 {
     public string BaseUrl { get; set; } = "";
+
+    [JsonConverter(typeof(ProtectedStringConverter))]
     public string ApiKey { get; set; } = "";
+
     public string OcrModel { get; set; } = "";
     public string TranslationModel { get; set; } = "";
+}
+
+/// <summary>
+/// JSON converter that encrypts API keys with DPAPI (DataProtectionScope.CurrentUser)
+/// before writing to disk. Serialized format: "enc:" + Base64(encrypted bytes).
+/// Backward-compatible with plaintext values (reads plaintext as-is).
+/// </summary>
+public class ProtectedStringConverter : JsonConverter<string>
+{
+    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("WpfAppTest-ApiKey-Protection-v1");
+    private const string EncryptedPrefix = "enc:";
+
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var value = reader.GetString();
+        if (string.IsNullOrEmpty(value)) return value;
+
+        // If encrypted, decrypt
+        if (value.StartsWith(EncryptedPrefix, StringComparison.Ordinal))
+        {
+            try
+            {
+                var encryptedBytes = Convert.FromBase64String(value[EncryptedPrefix.Length..]);
+                var decryptedBytes = ProtectedData.Unprotect(encryptedBytes, Entropy, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(decryptedBytes);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to decrypt API key: {ex.Message}");
+                return string.Empty;
+            }
+        }
+
+        // Plaintext — return as-is (backward compatibility)
+        return value;
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            writer.WriteStringValue(value);
+            return;
+        }
+
+        try
+        {
+            var plainBytes = Encoding.UTF8.GetBytes(value);
+            var encryptedBytes = ProtectedData.Protect(plainBytes, Entropy, DataProtectionScope.CurrentUser);
+            writer.WriteStringValue(EncryptedPrefix + Convert.ToBase64String(encryptedBytes));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to encrypt API key: {ex.Message}");
+            // Fall back to plaintext if encryption fails
+            writer.WriteStringValue(value);
+        }
+    }
 }
 
 public class AppSettings
@@ -23,7 +86,7 @@ public class AppSettings
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter() }
+        Converters = { new JsonStringEnumConverter(), new ProtectedStringConverter() }
     };
 
     // Active provider selection

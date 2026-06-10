@@ -10,9 +10,9 @@ using System.Threading.Tasks;
 
 namespace WpfAppTest.Providers;
 
-public class OllamaTranslationProvider : ITranslationProvider, IDisposable
+public class OllamaTranslationProvider : ITranslationProvider, IModelListable, IDisposable
 {
-    private readonly HttpClient _httpClient = new();
+    private HttpClient? _httpClient;
     private bool _disposed;
 
     public string Name => "ollama";
@@ -25,7 +25,8 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
         set
         {
             _baseUrl = value;
-            _httpClient.BaseAddress = new Uri(_baseUrl);
+            if (_httpClient != null)
+                _httpClient.BaseAddress = new Uri(_baseUrl);
         }
     }
     public string Model { get; set; } = "gemma3:1b";
@@ -52,6 +53,16 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
         public string? Name { get; set; }
     }
 
+    private HttpClient GetClient()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _httpClient ??= new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(60),
+            BaseAddress = new Uri(_baseUrl)
+        };
+    }
+
     public async Task<string> TranslateAsync(string text, string sourceLang = "ja", string targetLang = "en", CancellationToken ct = default)
     {
         var langNames = new Dictionary<string, string>
@@ -76,7 +87,7 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.PostAsync("/api/generate", content, ct);
+            response = await GetClient().PostAsync("/api/generate", content, ct);
             response.EnsureSuccessStatusCode();
         }
         catch (HttpRequestException ex)
@@ -95,7 +106,7 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
     {
         try
         {
-            var response = await _httpClient.GetAsync("/api/tags");
+            var response = await GetClient().GetAsync("/api/tags");
             return response.IsSuccessStatusCode;
         }
         catch { return false; }
@@ -103,7 +114,7 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
 
     public async Task<List<string>> ListModelsAsync(CancellationToken ct = default)
     {
-        var response = await _httpClient.GetAsync("/api/tags", ct);
+        var response = await GetClient().GetAsync("/api/tags", ct);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(ct);
         var tags = JsonSerializer.Deserialize<OllamaTagsResponse>(body);
@@ -114,7 +125,8 @@ public class OllamaTranslationProvider : ITranslationProvider, IDisposable
     {
         if (!_disposed)
         {
-            _httpClient.Dispose();
+            _httpClient?.Dispose();
+            _httpClient = null;
             _disposed = true;
         }
         GC.SuppressFinalize(this);
