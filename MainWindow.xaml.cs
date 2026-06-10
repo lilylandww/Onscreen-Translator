@@ -36,6 +36,7 @@ namespace WpfAppTest
         private readonly List<ITranslationProvider> _translationProviders = [];
         private bool _initializing = true;
         private SettingsWindow? _settingsWindow;
+        private CancellationTokenSource? _ocrCts;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -54,7 +55,13 @@ namespace WpfAppTest
         {
             try
             {
-                return await _currentOcrProvider.RecognizeTextAsync(imagePath);
+                _ocrCts ??= new CancellationTokenSource();
+                return await _currentOcrProvider.RecognizeTextAsync(imagePath, _ocrCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine("OCR cancelled — provider was swapped.");
+                return string.Empty;
             }
             catch (Exception ex)
             {
@@ -144,6 +151,11 @@ namespace WpfAppTest
         {
             // Reload settings from disk
             _settings = AppSettings.Load();
+
+            // Cancel any in-flight OCR before swapping providers
+            _ocrCts?.Cancel();
+            _ocrCts?.Dispose();
+            _ocrCts = null;
 
             // Dispose old providers
             if (_currentOcrProvider is IDisposable ocrDisposable)
@@ -886,6 +898,11 @@ namespace WpfAppTest
                 var config = _settings.GetProviderConfig(_settings.OcrProvider);
                 config.OcrModel = model;
                 SaveSettings();
+
+                // Cancel any in-flight OCR before swapping provider
+                _ocrCts?.Cancel();
+                _ocrCts?.Dispose();
+                _ocrCts = null;
 
                 // Dispose old provider and create new one
                 if (_currentOcrProvider is IDisposable disposable)

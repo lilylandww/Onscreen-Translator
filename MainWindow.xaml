@@ -196,7 +196,7 @@
                     x:Name="TranslationModelComboBox"
                     Width="120"
                     Style="{StaticResource ToolbarComboBoxStyle}"
-                    ToolTip="Translation Model (Ollama)"
+                    ToolTip="Translation Model"
                     Visibility="Collapsed"
                     SelectionChanged="TranslationModelComboBox_SelectionChanged" />
                 <Button

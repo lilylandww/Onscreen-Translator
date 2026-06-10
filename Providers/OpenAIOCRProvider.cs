@@ -19,7 +19,7 @@ namespace WpfAppTest.Providers;
 /// Includes a specialized system prompt and harness to ensure accurate text extraction
 /// when using a general-purpose LLM for OCR tasks.
 /// </summary>
-public class OpenAIOCRProvider : IOCRProvider, IDisposable
+public class OpenAIOCRProvider : IOCRProvider, IModelListable, IDisposable
 {
     private HttpClient? _httpClient;
     private bool _disposed;
@@ -74,31 +74,7 @@ This is critical: your entire output will be used directly as OCR text. Any devi
         _displayName = displayName;
     }
 
-    #region OpenAI API DTOs
-
-    private class ChatRequest
-    {
-        [JsonPropertyName("model")]
-        public string Model { get; set; } = "";
-
-        [JsonPropertyName("messages")]
-        public List<ChatMessage> Messages { get; set; } = new();
-
-        [JsonPropertyName("max_tokens")]
-        public int MaxTokens { get; set; } = 4096;
-
-        [JsonPropertyName("temperature")]
-        public double Temperature { get; set; } = 0.1;
-    }
-
-    private class ChatMessage
-    {
-        [JsonPropertyName("role")]
-        public string Role { get; set; } = "";
-
-        [JsonPropertyName("content")]
-        public object? Content { get; set; }
-    }
+    #region OpenAI API DTOs (OCR-specific)
 
     private class TextContent
     {
@@ -125,36 +101,6 @@ This is critical: your entire output will be used directly as OCR text. Any devi
 
         [JsonPropertyName("detail")]
         public string Detail { get; set; } = "high";
-    }
-
-    private class ChatResponse
-    {
-        [JsonPropertyName("choices")]
-        public List<Choice>? Choices { get; set; }
-    }
-
-    private class Choice
-    {
-        [JsonPropertyName("message")]
-        public ChatMessageContent? Message { get; set; }
-    }
-
-    private class ChatMessageContent
-    {
-        [JsonPropertyName("content")]
-        public string? Content { get; set; }
-    }
-
-    private class ModelsResponse
-    {
-        [JsonPropertyName("data")]
-        public List<ModelEntry>? Data { get; set; }
-    }
-
-    private class ModelEntry
-    {
-        [JsonPropertyName("id")]
-        public string? Id { get; set; }
     }
 
     #endregion
@@ -217,7 +163,8 @@ This is critical: your entire output will be used directly as OCR text. Any devi
         var client = GetClient();
         var response = await client.PostAsync("/chat/completions", content, ct);
         var responseBody = await response.Content.ReadAsStringAsync(ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"OCR API error ({(int)response.StatusCode}): {responseBody}");
 
         var result = JsonSerializer.Deserialize<ChatResponse>(responseBody);
         var extractedText = result?.Choices?
