@@ -28,8 +28,7 @@ namespace WpfAppTest
         private TextBox? editTextBox;
         private bool isEditing = false;
         private bool captureModeEnabled = true;
-        private bool useCustomOCR = true;
-        private bool useOllamaTranslation = false;
+
         private int currentScreenIndex = 0;
         private SystemTrayIcon? _systemTrayIcon;
         private WindowState _previousWindowState = WindowState.Maximized;
@@ -148,10 +147,16 @@ namespace WpfAppTest
 
             _settingsWindow = new SettingsWindow(_settings);
             _settingsWindow.SettingsChanged += OnSettingsChanged;
+            _settingsWindow.Closed += (s, e) =>
+            {
+                if (_settingsWindow != null)
+                    _settingsWindow.SettingsChanged -= OnSettingsChanged;
+                _settingsWindow = null;
+            };
             _settingsWindow.Show();
         }
 
-        private void OnSettingsChanged()
+        private async void OnSettingsChanged()
         {
             // Reload settings from disk
             _settings = AppSettings.Load();
@@ -181,7 +186,7 @@ namespace WpfAppTest
             // Refresh toolbar UI
             _initializing = true;
             InitializeTranslationProviderComboBox();
-            _ = LoadOllamaOcrModelsAsync();
+            await LoadOllamaOcrModelsAsync();
             _initializing = false;
 
             Debug.WriteLine("Settings applied — providers refreshed.");
@@ -616,6 +621,9 @@ namespace WpfAppTest
                 editTextBox.KeyDown -= EditTextBox_KeyDown;
             }
             CursorClipper.UnClipCursor();
+            _ocrCts?.Cancel();
+            _ocrCts?.Dispose();
+            _ocrCts = null;
             if (_currentOcrProvider is IDisposable ocrDisposable)
                 ocrDisposable.Dispose();
             foreach (var provider in _translationProviders)
@@ -803,7 +811,7 @@ namespace WpfAppTest
                     TranslationModelComboBox.Items.Add(model);
                 }
 
-                var currentModel = _settings.GetProviderConfig("ollama").TranslationModel;
+                var currentModel = _settings.GetProviderConfig(_currentTranslationProvider.Name).TranslationModel;
                 if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
                 {
                     TranslationModelComboBox.SelectedItem = currentModel;
@@ -816,7 +824,7 @@ namespace WpfAppTest
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to load translation models: {ex.Message}");
-                TranslationModelComboBox.Items.Add(_settings.GetProviderConfig("ollama").TranslationModel);
+                TranslationModelComboBox.Items.Add(_settings.GetProviderConfig(_currentTranslationProvider.Name).TranslationModel);
                 TranslationModelComboBox.SelectedIndex = 0;
             }
         }
@@ -972,7 +980,7 @@ namespace WpfAppTest
                 if (_currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
                 {
                     ollamaProvider.Model = model;
-                    _settings.GetProviderConfig("ollama").TranslationModel = model;
+                    _settings.GetProviderConfig(ollamaProvider.Name).TranslationModel = model;
                 }
                 else if (_currentTranslationProvider is OpenAITranslationProvider openaiProvider)
                 {
@@ -1074,17 +1082,7 @@ namespace WpfAppTest
             ScreenSwitchButton.ToolTip = $"Switch Screen (Monitor {currentScreenIndex + 1}: {(int)bounds.Width}x{(int)bounds.Height})";
         }
 
-        private void TranslationToggleButton_Checked(object sender, RoutedEventArgs e)
-        {
-            useOllamaTranslation = true;
-            TranslationToggleButton.ToolTip = "Using Ollama gemma3:1b (Click for Google Translate)";
-        }
 
-        private void TranslationToggleButton_Unchecked(object sender, RoutedEventArgs e)
-        {
-            useOllamaTranslation = false;
-            TranslationToggleButton.ToolTip = "Using Google Translate (Click for Ollama)";
-        }
 
         private void SearchExecuteButton_Click(object sender, RoutedEventArgs e)
         {

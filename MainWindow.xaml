@@ -243,13 +243,7 @@
                                    Margin="2,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
-                <ToggleButton
-                    x:Name="TranslationToggleButton"
-                    Checked="TranslationToggleButton_Checked"
-                    Unchecked="TranslationToggleButton_Unchecked"
-                    ToolTip="Using Google Translate (Click for Ollama)">
-                    <wpfui:SymbolIcon Symbol="Globe24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
-                </ToggleButton>
+
             </StackPanel>
         </Border>
 
