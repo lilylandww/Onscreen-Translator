@@ -10,6 +10,7 @@ using WpfAppTest.Providers;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WpfAppTest
 {
@@ -27,6 +28,9 @@ namespace WpfAppTest
         private TextBox? editTextBox;
         private bool isEditing = false;
         private bool captureModeEnabled = true;
+        private bool useCustomOCR = true;
+        private bool useOllamaTranslation = false;
+        private int currentScreenIndex = 0;
         private SystemTrayIcon? _systemTrayIcon;
         private WindowState _previousWindowState = WindowState.Maximized;
 
@@ -645,6 +649,34 @@ namespace WpfAppTest
             InitializeTranslationProviderComboBox();
             InitializeModelComboBoxes();
 
+            var displays = DisplayInfo.AllDisplayInfos.ToList();
+            if (displays.Count == 0)
+            {
+                UpdateScreenButton(displays);
+                InitializeSystemTrayIcon();
+                if (IsMouseOver)
+                {
+                    TopButtonStack.Visibility = Visibility.Visible;
+                }
+                return;
+            }
+
+            System.Windows.Point mousePos;
+            if (!ApplicationUtilities.GetMousePosition(out mousePos))
+            {
+                mousePos = new System.Windows.Point(0, 0);
+            }
+            for (int i = 0; i < displays.Count; i++)
+            {
+                Rect bound = displays[i].ScaledBounds();
+                if (bound.Contains(mousePos))
+                {
+                    currentScreenIndex = i;
+                    break;
+                }
+            }
+            UpdateScreenButton(displays);
+
             InitializeSystemTrayIcon();
 
             if (IsMouseOver)
@@ -850,6 +882,7 @@ namespace WpfAppTest
             vancas.MouseMove -= Canvas_MouseMove;
             vancas.MouseEnter -= Canvas_MouseEnter;
             vancas.MouseLeave -= Canvas_MouseLeave;
+            ScreenSwitchButton.Click -= ScreenSwitchButton_Click;
 
             SearchToggleButton.Checked -= SearchToggleButton_Checked;
             SearchToggleButton.Unchecked -= SearchToggleButton_Unchecked;
@@ -999,6 +1032,58 @@ namespace WpfAppTest
             vancas.Cursor = Cursors.Arrow;
             CaptureModeToggleButton.ToolTip = "Capture Mode Disabled (Click to enable)";
             BackgroundBrush.Opacity = 0.15;
+        }
+
+        private void ScreenSwitchButton_Click(object sender, RoutedEventArgs e)
+        {
+            var displays = DisplayInfo.AllDisplayInfos.ToList();
+            if (displays.Count <= 1) return;
+
+            if (currentScreenIndex >= displays.Count)
+            {
+                currentScreenIndex = 0;
+            }
+            currentScreenIndex = (currentScreenIndex + 1) % displays.Count;
+            MoveToScreen(displays[currentScreenIndex]);
+            UpdateScreenButton(displays);
+        }
+
+        private void MoveToScreen(DisplayInfo screen)
+        {
+            Rect bounds = screen.ScaledBounds();
+            WindowState = WindowState.Normal;
+            Left = bounds.X;
+            Top = bounds.Y;
+            Width = bounds.Width;
+            Height = bounds.Height;
+            WindowState = WindowState.Maximized;
+            FullWindow.Rect = new Rect(0, 0, bounds.Width, bounds.Height);
+            FreezeScreen();
+        }
+
+        private void UpdateScreenButton(IReadOnlyList<DisplayInfo> displays)
+        {
+            if (displays.Count <= 1)
+            {
+                ScreenSwitchButton.Visibility = Visibility.Collapsed;
+                return;
+            }
+            ScreenSwitchButton.Visibility = Visibility.Visible;
+            ScreenNumberText.Text = (currentScreenIndex + 1).ToString();
+            var bounds = displays[currentScreenIndex].ScaledBounds();
+            ScreenSwitchButton.ToolTip = $"Switch Screen (Monitor {currentScreenIndex + 1}: {(int)bounds.Width}x{(int)bounds.Height})";
+        }
+
+        private void TranslationToggleButton_Checked(object sender, RoutedEventArgs e)
+        {
+            useOllamaTranslation = true;
+            TranslationToggleButton.ToolTip = "Using Ollama gemma3:1b (Click for Google Translate)";
+        }
+
+        private void TranslationToggleButton_Unchecked(object sender, RoutedEventArgs e)
+        {
+            useOllamaTranslation = false;
+            TranslationToggleButton.ToolTip = "Using Google Translate (Click for Ollama)";
         }
 
         private void SearchExecuteButton_Click(object sender, RoutedEventArgs e)

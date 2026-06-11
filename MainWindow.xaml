@@ -233,6 +233,23 @@
                     ToolTip="Capture Mode Enabled (Click to disable)">
                     <wpfui:SymbolIcon Symbol="Cursor24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
+                <Button
+                    x:Name="ScreenSwitchButton"
+                    Click="ScreenSwitchButton_Click"
+                    ToolTip="Switch Screen (Monitor 1)">
+                    <StackPanel Orientation="Horizontal">
+                        <wpfui:SymbolIcon Symbol="Desktop24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+                        <TextBlock x:Name="ScreenNumberText" Text="1" FontSize="11"
+                                   Margin="2,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <ToggleButton
+                    x:Name="TranslationToggleButton"
+                    Checked="TranslationToggleButton_Checked"
+                    Unchecked="TranslationToggleButton_Unchecked"
+                    ToolTip="Using Google Translate (Click for Ollama)">
+                    <wpfui:SymbolIcon Symbol="Globe24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+                </ToggleButton>
             </StackPanel>
         </Border>
 
