@@ -41,7 +41,7 @@ namespace WpfAppTest
         private bool _initializing = true;
         private SettingsWindow? _settingsWindow;
         private CancellationTokenSource? _ocrCts;
-        private readonly FuriganaServiceManager _furiganaServiceManager = new();
+        private readonly FuriganaServiceManager _furiganaServiceManager = FuriganaServiceManager.Instance;
         private readonly OverlayState _overlayState = new();
         private CancellationTokenSource? _furiganaCts;
         private HttpFuriganaProvider? _furiganaProvider;
@@ -665,6 +665,58 @@ namespace WpfAppTest
             _overlayState.CurrentView = OverlayViewMode.Translation;
             FuriganaToggleButton.ToolTip = "Toggle Furigana View";
             RenderOverlay();
+        }
+
+        #endregion
+
+        #region Overlay View Switching (Phase 4 — Context Menu & Keyboard)
+
+        /// <summary>
+        /// Handles "Show Furigana" context menu click — switches overlay to Furigana view.
+        /// </summary>
+        private void ShowFurigana_Click(object sender, RoutedEventArgs e)
+        {
+            _overlayState.CurrentView = OverlayViewMode.Furigana;
+            RenderOverlay();
+        }
+
+        /// <summary>
+        /// Handles "Show Translation" context menu click — switches overlay to Translation view.
+        /// </summary>
+        private void ShowTranslation_Click(object sender, RoutedEventArgs e)
+        {
+            _overlayState.CurrentView = OverlayViewMode.Translation;
+            RenderOverlay();
+        }
+
+        /// <summary>
+        /// Handles "Show Original" context menu click — switches overlay to Original (OCR) view.
+        /// </summary>
+        private void ShowOriginal_Click(object sender, RoutedEventArgs e)
+        {
+            _overlayState.CurrentView = OverlayViewMode.Original;
+            RenderOverlay();
+        }
+
+        /// <summary>
+        /// Handles F-key press on overlay controls to cycle view:
+        /// Translation → Furigana → Original → Translation.
+        /// Uses PreviewKeyDown (not global Window.KeyDown) to avoid conflicts.
+        /// </summary>
+        private void Overlay_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.F)
+            {
+                _overlayState.CurrentView = _overlayState.CurrentView switch
+                {
+                    OverlayViewMode.Translation => OverlayViewMode.Furigana,
+                    OverlayViewMode.Furigana => OverlayViewMode.Original,
+                    OverlayViewMode.Original => OverlayViewMode.Translation,
+                    _ => OverlayViewMode.Translation
+                };
+                RenderOverlay();
+                e.Handled = true;
+            }
         }
 
         #endregion

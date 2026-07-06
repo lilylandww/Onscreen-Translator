@@ -20,6 +20,17 @@
     mc:Ignorable="d"
     >
     <Window.Resources>
+        <!-- Shared context menu for overlay controls (translatedTextBlock & rubyTextBlock) -->
+        <ContextMenu x:Key="OverlayContextMenu">
+            <MenuItem Header="Show Furigana" Click="ShowFurigana_Click" />
+            <MenuItem Header="Show Translation" Click="ShowTranslation_Click" />
+            <MenuItem Header="Show Original" Click="ShowOriginal_Click" />
+            <Separator />
+            <MenuItem Header="Copy" Command="ApplicationCommands.Copy" />
+            <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll" />
+            <Separator />
+            <MenuItem Header="Edit" Click="EditMenuItem_Click" />
+        </ContextMenu>
         <Style x:Key="SymbolTextStyle" TargetType="TextBlock">
             <Setter Property="HorizontalAlignment" Value="Center" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -92,22 +103,22 @@
                 BorderThickness="0"
                 SelectionBrush="DodgerBlue"
                 SelectionOpacity="0.5"
+                Focusable="True"
+                KeyboardNavigation.IsTabStop="True"
+                PreviewKeyDown="Overlay_PreviewKeyDown"
+                ContextMenu="{StaticResource OverlayContextMenu}"
                 VerticalScrollBarVisibility="Disabled">
                 <TextBox.Background>
                     <SolidColorBrush Color="AntiqueWhite" Opacity="0.8"/>
                 </TextBox.Background>
-                <TextBox.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="Copy" Command="ApplicationCommands.Copy" />
-                        <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll" />
-                        <Separator />
-                        <MenuItem Header="Edit" Click="EditMenuItem_Click" />
-                    </ContextMenu>
-                </TextBox.ContextMenu>
             </TextBox>
             <local:RubyTextBlock
                 x:Name="rubyTextBlock"
                 Visibility="Collapsed"
+                Focusable="True"
+                KeyboardNavigation.IsTabStop="True"
+                PreviewKeyDown="Overlay_PreviewKeyDown"
+                ContextMenu="{StaticResource OverlayContextMenu}"
                 BaseFontSize="16" />
             <Button
                 x:Name="FinishEditButton"

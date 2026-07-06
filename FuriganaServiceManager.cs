@@ -35,6 +35,23 @@ public class FuriganaServiceStatusChangedEventArgs : EventArgs
 /// </summary>
 public class FuriganaServiceManager : IDisposable
 {
+    /// <summary>
+    /// Shared singleton instance used by both MainWindow and SettingsWindow
+    /// so that start/stop in Settings is reflected everywhere.
+    /// </summary>
+    private static FuriganaServiceManager? _instance;
+    private static readonly object _instanceLock = new();
+    public static FuriganaServiceManager Instance
+    {
+        get
+        {
+            lock (_instanceLock)
+            {
+                return _instance ??= new FuriganaServiceManager();
+            }
+        }
+    }
+
     private Process? _process;
     private readonly object _lock = new();
     private bool _disposed;
