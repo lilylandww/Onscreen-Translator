@@ -76,28 +76,22 @@ public partial class SettingsWindow : Window
         foreach (var name in ProviderFactory.AvailableOcrProviders)
         {
             var display = ProviderFactory.OcrProviderDisplayNames.GetValueOrDefault(name, name);
-            OcrProviderComboBox.Items.Add(new ComboBoxItem { Content = display, Tag = name });
+            OcrProviderComboBox.Items.Add(display);
         }
 
-        // Select current provider
-        for (int i = 0; i < OcrProviderComboBox.Items.Count; i++)
-        {
-            if (((ComboBoxItem)OcrProviderComboBox.Items[i]).Tag as string == _workingCopy.OcrProvider)
-            {
-                OcrProviderComboBox.SelectedIndex = i;
-                break;
-            }
-        }
-        if (OcrProviderComboBox.SelectedIndex < 0)
-            OcrProviderComboBox.SelectedIndex = 0;
+        // See InitializeTranslationProviderComboBox: plain strings must be
+        // used so WPF UI's selection box renders the text.
+        int idx = Array.IndexOf(ProviderFactory.AvailableOcrProviders, _workingCopy.OcrProvider);
+        OcrProviderComboBox.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
     private void OcrProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing) return;
-        if (OcrProviderComboBox.SelectedItem is ComboBoxItem item && item.Tag is string name)
+        int idx = OcrProviderComboBox.SelectedIndex;
+        if (idx >= 0 && idx < ProviderFactory.AvailableOcrProviders.Length)
         {
-            _workingCopy.OcrProvider = name;
+            _workingCopy.OcrProvider = ProviderFactory.AvailableOcrProviders[idx];
             UpdateOcrProviderPanel();
         }
     }
@@ -161,27 +155,25 @@ public partial class SettingsWindow : Window
         foreach (var name in ProviderFactory.AvailableTranslationProviders)
         {
             var display = ProviderFactory.TranslationProviderDisplayNames.GetValueOrDefault(name, name);
-            TranslationProviderComboBox.Items.Add(new ComboBoxItem { Content = display, Tag = name });
+            TranslationProviderComboBox.Items.Add(display);
         }
 
-        for (int i = 0; i < TranslationProviderComboBox.Items.Count; i++)
-        {
-            if (((ComboBoxItem)TranslationProviderComboBox.Items[i]).Tag as string == _workingCopy.TranslationProvider)
-            {
-                TranslationProviderComboBox.SelectedIndex = i;
-                break;
-            }
-        }
-        if (TranslationProviderComboBox.SelectedIndex < 0)
-            TranslationProviderComboBox.SelectedIndex = 0;
+        // NOTE: do NOT add ComboBoxItem objects directly. WPF UI's ComboBox
+        // template renders the closed selection box from SelectionBoxItem,
+        // which becomes the ComboBoxItem container itself (not its text),
+        // producing an empty/invisible selection box. Plain strings render
+        // correctly. The provider name is recovered by index below.
+        int idx = Array.IndexOf(ProviderFactory.AvailableTranslationProviders, _workingCopy.TranslationProvider);
+        TranslationProviderComboBox.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
     private void TranslationProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing) return;
-        if (TranslationProviderComboBox.SelectedItem is ComboBoxItem item && item.Tag is string name)
+        int idx = TranslationProviderComboBox.SelectedIndex;
+        if (idx >= 0 && idx < ProviderFactory.AvailableTranslationProviders.Length)
         {
-            _workingCopy.TranslationProvider = name;
+            _workingCopy.TranslationProvider = ProviderFactory.AvailableTranslationProviders[idx];
             UpdateTranslationProviderPanel();
         }
     }
@@ -583,7 +575,7 @@ public partial class SettingsWindow : Window
         {
             _settings.Save();
             SettingsChanged?.Invoke();
-            DialogResult = true;
+            SetDialogResult(true);
             Close();
         }
         catch (Exception ex)
@@ -595,8 +587,21 @@ public partial class SettingsWindow : Window
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
+        SetDialogResult(false);
         Close();
+    }
+
+    private void SetDialogResult(bool? value)
+    {
+        try
+        {
+            DialogResult = value;
+        }
+        catch (InvalidOperationException)
+        {
+            // DialogResult can only be set if the window was shown using ShowDialog().
+            // If shown using Show(), setting it throws an exception, which we can safely ignore.
+        }
     }
 
     #endregion
