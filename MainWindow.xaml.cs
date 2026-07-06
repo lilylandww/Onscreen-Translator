@@ -7,6 +7,7 @@ using System.Windows.Input;
 using WpfAppTest.Utilities;
 using WpfAppTest.Extensions;
 using WpfAppTest.Providers;
+using WpfAppTest.Providers.Furigana;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Collections.Generic;
@@ -43,6 +44,7 @@ namespace WpfAppTest
         private readonly FuriganaServiceManager _furiganaServiceManager = new();
         private readonly OverlayState _overlayState = new();
         private CancellationTokenSource? _furiganaCts;
+        private HttpFuriganaProvider? _furiganaProvider;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -171,6 +173,9 @@ namespace WpfAppTest
             _furiganaCts?.Cancel();
             _furiganaCts?.Dispose();
             _furiganaCts = null;
+            // Dispose cached furigana provider (URL may have changed)
+            _furiganaProvider?.Dispose();
+            _furiganaProvider = null;
 
             // Dispose old providers
             if (_currentOcrProvider is IDisposable ocrDisposable)
@@ -316,12 +321,32 @@ namespace WpfAppTest
             bmp.Save(outputFileName, ImageFormat.Png);
             string text = await GetOCRTextAsync(outputFileName);
             OCRText = text;
+
+            // Store OCR text and region in overlay state
+            _overlayState.OcrText = text;
+            _overlayState.Region = scaledRegion;
+            _overlayState.X = xDimension;
+            _overlayState.Y = yDimension;
+            _overlayState.CurrentView = OverlayViewMode.Translation;
+
+            // Reset toggle to translation view
+            if (FuriganaToggleButton.IsChecked == true)
+                FuriganaToggleButton.IsChecked = false;
+
+            // Kick off furigana fetch in parallel with translation (non-blocking)
+            _furiganaCts?.Cancel();
+            _furiganaCts?.Dispose();
+            _furiganaCts = new CancellationTokenSource();
+            _ = FetchFuriganaAsync(text, _furiganaCts.Token);
+
+            // Fetch translation
             TranslatedText = await GetTranslatedTextAsync(OCRText);
             Console.WriteLine(TranslatedText);
 
             if (TranslatedText != null)
             {
-                UpdateTextBlock(TranslatedText, scaledRegion, xDimension, yDimension);
+                _overlayState.Translation = TranslatedText;
+                RenderOverlay();
             }
         }
 
@@ -348,34 +373,11 @@ namespace WpfAppTest
 
         private void UpdateTextBlock(string translateText, Rectangle region, double xDimension = 0, double yDimension = 0)
         {
-            translatedTextBlock.Text = translateText;
-            translatedTextBlock.Width = region.Width;
-            translatedTextBlock.Height = region.Height;
-
-            // Keep default font size (16) if text fits, otherwise shrink to fit
-            const double defaultFontSize = 16;
-            const double padding = 20;
-            double effectiveHeight = region.Height - padding;
-            double effectiveWidth = region.Width - padding;
-
-            // Check if text fits with default font size
-            double textHeightWithDefault = GetTextHeight(translateText, defaultFontSize, effectiveWidth);
-
-            if (textHeightWithDefault <= effectiveHeight)
-            {
-                // Text fits with default font size, keep it
-                translatedTextBlock.FontSize = defaultFontSize;
-            }
-            else
-            {
-                // Text doesn't fit, calculate smaller font size
-                double optimalFontSize = CalculateOptimalFontSize(translateText, region.Width, region.Height);
-                translatedTextBlock.FontSize = optimalFontSize;
-            }
-
-            Canvas.SetLeft(translatedTextBlock, xDimension);
-            Canvas.SetTop(translatedTextBlock, yDimension);
-            translatedTextBlock.VerticalAlignment = VerticalAlignment.Center;
+            _overlayState.Translation = translateText;
+            _overlayState.Region = region.Width > 0 && region.Height > 0 ? region : null;
+            _overlayState.X = xDimension;
+            _overlayState.Y = yDimension;
+            RenderOverlay();
         }
 
         /// <summary>
@@ -443,6 +445,229 @@ namespace WpfAppTest
             formattedText.MaxTextWidth = Math.Max(1, width);
             return formattedText.Height;
         }
+
+        #region Overlay Rendering (Phase 3)
+
+        /// <summary>
+        /// Switches between Translation, Furigana, and Original views based on
+        /// <see cref="OverlayState.CurrentView"/>, showing the appropriate control
+        /// and hiding the other.
+        /// </summary>
+        private void RenderOverlay()
+        {
+            if (_overlayState.Region is not { } region)
+            {
+                // No region captured — hide both controls
+                translatedTextBlock.Visibility = Visibility.Collapsed;
+                rubyTextBlock.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            double x = _overlayState.X;
+            double y = _overlayState.Y;
+
+            switch (_overlayState.CurrentView)
+            {
+                case OverlayViewMode.Furigana:
+                    RenderFuriganaView(region, x, y);
+                    break;
+
+                case OverlayViewMode.Original:
+                    RenderTextView(_overlayState.OcrText, region, x, y);
+                    break;
+
+                case OverlayViewMode.Translation:
+                default:
+                    RenderTextView(_overlayState.Translation, region, x, y);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Renders the Translation or Original view using <c>translatedTextBlock</c>.
+        /// </summary>
+        private void RenderTextView(string text, System.Drawing.Rectangle region, double x, double y)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                translatedTextBlock.Text = "";
+                translatedTextBlock.Visibility = Visibility.Collapsed;
+                rubyTextBlock.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            translatedTextBlock.Text = text;
+            translatedTextBlock.Width = region.Width;
+            translatedTextBlock.Height = region.Height;
+
+            const double defaultFontSize = 16;
+            const double padding = 20;
+            double effectiveHeight = region.Height - padding;
+            double textHeightWithDefault = GetTextHeight(text, defaultFontSize, region.Width - padding);
+
+            if (textHeightWithDefault <= effectiveHeight)
+            {
+                translatedTextBlock.FontSize = defaultFontSize;
+            }
+            else
+            {
+                translatedTextBlock.FontSize = CalculateOptimalFontSize(text, region.Width, region.Height);
+            }
+
+            Canvas.SetLeft(translatedTextBlock, x);
+            Canvas.SetTop(translatedTextBlock, y);
+            translatedTextBlock.VerticalAlignment = VerticalAlignment.Center;
+            translatedTextBlock.Visibility = Visibility.Visible;
+            rubyTextBlock.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Renders the Furigana view using <c>rubyTextBlock</c>.
+        /// Falls back to Translation view if no furigana data is available.
+        /// </summary>
+        private void RenderFuriganaView(System.Drawing.Rectangle region, double x, double y)
+        {
+            if (_overlayState.FuriganaSegments.Count == 0)
+            {
+                // No furigana data yet — fall back to translation
+                _overlayState.CurrentView = OverlayViewMode.Translation;
+                RenderTextView(_overlayState.Translation, region, x, y);
+                return;
+            }
+
+            string surfaceText = string.Concat(_overlayState.FuriganaSegments.Select(s => s.Surface));
+
+            // Calculate optimal font size accounting for ruby row overhead
+            double optimalFontSize = CalculateOptimalFontSizeRuby(surfaceText, region.Width, region.Height);
+
+            rubyTextBlock.BaseFontSize = optimalFontSize;
+            rubyTextBlock.Width = region.Width;
+            rubyTextBlock.Height = region.Height;
+            rubyTextBlock.SetSegments(_overlayState.FuriganaSegments);
+
+            Canvas.SetLeft(rubyTextBlock, x);
+            Canvas.SetTop(rubyTextBlock, y);
+            rubyTextBlock.Visibility = Visibility.Visible;
+            translatedTextBlock.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Calculates optimal font size for ruby text, subtracting estimated ruby row overhead
+        /// from the available height.
+        /// </summary>
+        private double CalculateOptimalFontSizeRuby(string text, double availableWidth, double availableHeight)
+        {
+            if (string.IsNullOrWhiteSpace(text) || availableWidth <= 0 || availableHeight <= 0)
+                return 16;
+
+            const double maxFontSize = 16;
+            const double minFontSize = 8;
+            const double padding = 20;
+
+            double effectiveWidth = availableWidth - padding;
+            double effectiveHeight = availableHeight - padding;
+
+            double low = minFontSize;
+            double high = maxFontSize;
+            double optimalSize = minFontSize;
+
+            while (low <= high)
+            {
+                double mid = (low + high) / 2;
+
+                // Estimate number of wrap lines for this font size
+                // Japanese characters are roughly mid-width each
+                double charsPerLine = Math.Max(1, effectiveWidth / mid);
+                double estimatedLines = Math.Ceiling(text.Length / charsPerLine);
+
+                // Reserve space for ruby rows (one per line)
+                double rubyOverhead = mid * RubyTextBlock.RubyLineOverheadFactor * estimatedLines;
+                double adjustedHeight = Math.Max(0, effectiveHeight - rubyOverhead);
+
+                double textHeight = GetTextHeight(text, mid, effectiveWidth);
+
+                if (textHeight <= adjustedHeight)
+                {
+                    optimalSize = mid;
+                    low = mid + 0.5;
+                }
+                else
+                {
+                    high = mid - 0.5;
+                }
+            }
+
+            return Math.Max(minFontSize, Math.Min(maxFontSize, optimalSize));
+        }
+
+        /// <summary>
+        /// Fetches furigana readings for the given text from the sidecar service.
+        /// Runs in the background; updates the overlay if the Furigana view is active.
+        /// </summary>
+        private async Task FetchFuriganaAsync(string text, CancellationToken ct)
+        {
+            try
+            {
+                _furiganaProvider ??= new HttpFuriganaProvider(_settings.Furigana.SidecarUrl);
+
+                var segments = await _furiganaProvider.GetFuriganaAsync(
+                    text,
+                    _settings.Furigana.UseFlflFallback,
+                    ct);
+
+                ct.ThrowIfCancellationRequested();
+
+                _overlayState.FuriganaSegments = segments;
+
+                // If the user has toggled to Furigana view, re-render
+                if (_overlayState.CurrentView == OverlayViewMode.Furigana)
+                {
+                    RenderOverlay();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when user selects a new region — ignore
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Furigana] Fetch error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Handles the FuriganaToggleButton Checked event.
+        /// Switches the overlay to Furigana view if data is available.
+        /// </summary>
+        private void FuriganaToggleButton_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_overlayState.Region == null)
+            {
+                // No region captured — revert toggle
+                FuriganaToggleButton.IsChecked = false;
+                return;
+            }
+
+            _overlayState.CurrentView = OverlayViewMode.Furigana;
+            FuriganaToggleButton.ToolTip = "Switch to Translation View";
+            RenderOverlay();
+        }
+
+        /// <summary>
+        /// Handles the FuriganaToggleButton Unchecked event.
+        /// Switches the overlay back to Translation view.
+        /// </summary>
+        private void FuriganaToggleButton_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_overlayState.Region == null)
+                return;
+
+            _overlayState.CurrentView = OverlayViewMode.Translation;
+            FuriganaToggleButton.ToolTip = "Toggle Furigana View";
+            RenderOverlay();
+        }
+
+        #endregion
 
         private void EditTextBox_LostFocus(object sender, RoutedEventArgs e)
         {
@@ -563,14 +788,24 @@ namespace WpfAppTest
 
             if (editTextBox?.Text == null) return;
             OCRText = editTextBox.Text;
+            _overlayState.OcrText = OCRText;
+
+            // Kick off furigana fetch for the edited text
+            _furiganaCts?.Cancel();
+            _furiganaCts?.Dispose();
+            _furiganaCts = new CancellationTokenSource();
+            _ = FetchFuriganaAsync(OCRText, _furiganaCts.Token);
+
             TranslatedText = await GetTranslatedTextAsync(editTextBox.Text);
-            translatedTextBlock.Text = TranslatedText;
+            _overlayState.Translation = TranslatedText;
 
             translatedTextBlock.Visibility = Visibility.Visible;
             FinishEditButton.Visibility = Visibility.Collapsed;
             vancas.Children.Remove(editTextBox);
             editTextBox = null;
             isEditing = false;
+
+            RenderOverlay();
         }
 
         private void CancelEditing()
@@ -600,7 +835,15 @@ namespace WpfAppTest
         private void Window_Deactivated(object sender, EventArgs e)
         {
             Unfreeze();
-            UpdateTextBlock("", new Rectangle(0, 0, 0, 0), 0, 0);
+            // Clear overlay state and hide both controls
+            _overlayState.OcrText = "";
+            _overlayState.Translation = "";
+            _overlayState.FuriganaSegments.Clear();
+            _overlayState.CurrentView = OverlayViewMode.Translation;
+            _overlayState.Region = null;
+            translatedTextBlock.Text = "";
+            translatedTextBlock.Visibility = Visibility.Collapsed;
+            rubyTextBlock.Visibility = Visibility.Collapsed;
             selectBorder.BorderThickness = new Thickness(0);
         }
 
@@ -627,6 +870,8 @@ namespace WpfAppTest
             _furiganaCts?.Cancel();
             _furiganaCts?.Dispose();
             _furiganaCts = null;
+            _furiganaProvider?.Dispose();
+            _furiganaProvider = null;
             _furiganaServiceManager.Dispose();
             if (_currentOcrProvider is IDisposable ocrDisposable)
                 ocrDisposable.Dispose();
@@ -657,8 +902,11 @@ namespace WpfAppTest
             KeyDown += HandleKeyDown;
             SetImageToBackground();
             SearchToggleButton.ToolTip = "Show Dictionary Search";
-            // TODO: re-enable in Phase 3 (toggle overlay view)
-            FuriganaToggleButton.IsEnabled = false;
+            // Phase 3: Re-enable furigana toggle for overlay view switching
+            FuriganaToggleButton.IsChecked = false;
+            FuriganaToggleButton.ToolTip = "Toggle Furigana View";
+            FuriganaToggleButton.Checked += FuriganaToggleButton_Checked;
+            FuriganaToggleButton.Unchecked += FuriganaToggleButton_Unchecked;
 
             InitializeTranslationProviderComboBox();
             InitializeModelComboBoxes();
@@ -900,6 +1148,8 @@ namespace WpfAppTest
 
             SearchToggleButton.Checked -= SearchToggleButton_Checked;
             SearchToggleButton.Unchecked -= SearchToggleButton_Unchecked;
+            FuriganaToggleButton.Checked -= FuriganaToggleButton_Checked;
+            FuriganaToggleButton.Unchecked -= FuriganaToggleButton_Unchecked;
             CaptureModeToggleButton.Checked -= CaptureModeToggleButton_Checked;
             CaptureModeToggleButton.Unchecked -= CaptureModeToggleButton_Unchecked;
             OcrModelComboBox.SelectionChanged -= OcrModelComboBox_SelectionChanged;

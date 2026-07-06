@@ -105,6 +105,10 @@
                     </ContextMenu>
                 </TextBox.ContextMenu>
             </TextBox>
+            <local:RubyTextBlock
+                x:Name="rubyTextBlock"
+                Visibility="Collapsed"
+                BaseFontSize="16" />
             <Button
                 x:Name="FinishEditButton"
                 Visibility="Collapsed"
