@@ -45,6 +45,7 @@ namespace WpfAppTest
         private readonly OverlayState _overlayState = new();
         private CancellationTokenSource? _furiganaCts;
         private HttpFuriganaProvider? _furiganaProvider;
+        private OllamaFuriganaFallbackProvider? _ollamaFallback;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -106,6 +107,9 @@ namespace WpfAppTest
                 ?? _translationProviders[0];
 
             StateChanged += Window_StateChanged;
+
+            // Subscribe to furigana degradation events
+            _furiganaServiceManager.DegradedChanged += OnFuriganaDegradedChanged;
         }
 
         public void SetImageToBackground()
@@ -176,6 +180,8 @@ namespace WpfAppTest
             // Dispose cached furigana provider (URL may have changed)
             _furiganaProvider?.Dispose();
             _furiganaProvider = null;
+            _ollamaFallback?.Dispose();
+            _ollamaFallback = null;
 
             // Dispose old providers
             if (_currentOcrProvider is IDisposable ocrDisposable)
@@ -449,6 +455,21 @@ namespace WpfAppTest
         #region Overlay Rendering (Phase 3)
 
         /// <summary>
+        /// Handles degradation state changes from <see cref="FuriganaServiceManager"/>.
+        /// Logs the transition and disposes the cached Ollama fallback when FLFL is restored.
+        /// </summary>
+        private void OnFuriganaDegradedChanged(object? sender, bool isDegraded)
+        {
+            Debug.WriteLine($"[MainWindow] Furigana degraded state changed: IsDegraded={isDegraded}");
+            if (!isDegraded)
+            {
+                // FLFL restored — dispose any cached Ollama fallback to avoid stale connections
+                _ollamaFallback?.Dispose();
+                _ollamaFallback = null;
+            }
+        }
+
+        /// <summary>
         /// Switches between Translation, Furigana, and Original views based on
         /// <see cref="OverlayState.CurrentView"/>, showing the appropriate control
         /// and hiding the other.
@@ -602,6 +623,9 @@ namespace WpfAppTest
 
         /// <summary>
         /// Fetches furigana readings for the given text from the sidecar service.
+        /// When degraded (FLFL slow), the sidecar skips FLFL (Sudachi-only) and any
+        /// OOV segments are supplemented by the user's configured translation LLM
+        /// via <see cref="OllamaFuriganaFallbackProvider"/>.
         /// Runs in the background; updates the overlay if the Furigana view is active.
         /// </summary>
         private async Task FetchFuriganaAsync(string text, CancellationToken ct)
@@ -610,12 +634,38 @@ namespace WpfAppTest
             {
                 _furiganaProvider ??= new HttpFuriganaProvider(_settings.Furigana.SidecarUrl);
 
-                var segments = await _furiganaProvider.GetFuriganaAsync(
-                    text,
-                    _settings.Furigana.UseFlflFallback,
-                    ct);
+                // When degraded, tell sidecar to skip FLFL (Sudachi only)
+                bool allowFallback = !_furiganaServiceManager.IsDegraded;
+
+                var segments = await _furiganaProvider.GetFuriganaAsync(text, allowFallback, ct);
 
                 ct.ThrowIfCancellationRequested();
+
+                // When degraded, supplement OOV segments with Ollama LLM fallback
+                if (_furiganaServiceManager.IsDegraded && segments.Exists(s => s.IsOov || string.IsNullOrEmpty(s.Reading)))
+                {
+                    try
+                    {
+                        var ollamaFallback = GetOrCreateOllamaFallback();
+                        if (ollamaFallback != null)
+                        {
+                            var llmSegments = await ollamaFallback.GetFallbackAsync(text, ct);
+                            ct.ThrowIfCancellationRequested();
+
+                            // Merge LLM readings into OOV positions
+                            segments = MergeLlmFallback(segments, llmSegments);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        Debug.WriteLine($"[Furigana] Ollama fallback error (non-fatal): {fallbackEx.Message}");
+                        // Continue with Sudachi-only segments — OOVs get no ruby
+                    }
+                }
 
                 _overlayState.FuriganaSegments = segments;
 
@@ -633,6 +683,76 @@ namespace WpfAppTest
             {
                 Debug.WriteLine($"[Furigana] Fetch error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Lazily creates or returns the cached <see cref="OllamaFuriganaFallbackProvider"/>
+        /// using the user's currently configured translation provider settings.
+        /// </summary>
+        private OllamaFuriganaFallbackProvider? GetOrCreateOllamaFallback()
+        {
+            if (_ollamaFallback != null)
+                return _ollamaFallback;
+
+            try
+            {
+                var providerConfig = _settings.GetProviderConfig(_settings.TranslationProvider);
+                string baseUrl = providerConfig.BaseUrl;
+                string apiKey = providerConfig.ApiKey;
+                string model = providerConfig.TranslationModel;
+
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model))
+                {
+                    Debug.WriteLine("[Furigana] Cannot create Ollama fallback — translation provider not configured.");
+                    return null;
+                }
+
+                _ollamaFallback = new OllamaFuriganaFallbackProvider(baseUrl, apiKey, model);
+                return _ollamaFallback;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Furigana] Failed to create Ollama fallback provider: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Merges LLM-generated furigana readings into the Sudachi segment list.
+        /// For each OOV or missing-reading segment, finds a matching LLM segment
+        /// by surface prefix and copies its reading.
+        /// </summary>
+        private static List<FuriganaSegment> MergeLlmFallback(
+            List<FuriganaSegment> sudachiSegments,
+            List<FuriganaSegment> llmSegments)
+        {
+            if (llmSegments.Count == 0)
+                return sudachiSegments;
+
+            var merged = new List<FuriganaSegment>(sudachiSegments);
+            int llmIndex = 0;
+
+            for (int i = 0; i < merged.Count; i++)
+            {
+                var seg = merged[i];
+                if (!seg.IsOov && !string.IsNullOrEmpty(seg.Reading))
+                    continue;
+
+                // Try to find an LLM segment whose surface starts with or matches this surface
+                if (llmIndex < llmSegments.Count)
+                {
+                    var llmSeg = llmSegments[llmIndex];
+                    if (!string.IsNullOrEmpty(llmSeg.Reading) &&
+                        (llmSeg.Surface.StartsWith(seg.Surface, StringComparison.Ordinal) ||
+                         seg.Surface.StartsWith(llmSeg.Surface, StringComparison.Ordinal)))
+                    {
+                        merged[i] = seg with { Reading = llmSeg.Reading, IsOov = false };
+                        llmIndex++;
+                    }
+                }
+            }
+
+            return merged;
         }
 
         /// <summary>
@@ -924,6 +1044,8 @@ namespace WpfAppTest
             _furiganaCts = null;
             _furiganaProvider?.Dispose();
             _furiganaProvider = null;
+            _ollamaFallback?.Dispose();
+            _ollamaFallback = null;
             _furiganaServiceManager.Dispose();
             if (_currentOcrProvider is IDisposable ocrDisposable)
                 ocrDisposable.Dispose();
