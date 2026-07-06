@@ -8,6 +8,7 @@ J2E OCR Translator is a Windows desktop application built with WPF (.NET 8) for 
 - **OCR Models:** Toggle between Manga OCR and a custom OCR model for text recognition.
 - **Translation:** Instantly translate recognized Japanese text to English using Google Translate or DeepL.
 - **Dictionary Lookup:** Search for Japanese words and view readings and meanings.
+- **Furigana (Ruby Readings):** Display hiragana phonetic readings above kanji in the overlay. Uses a Python sidecar with SudachiPy for dictionary words and FLFL (1B LLM) for out-of-vocabulary tokens. Falls back to Ollama when FLFL is too slow.
 - **Editable Results:** Edit OCR results and re-translate as needed.
 - **Modern UI:** Uses WPF-UI for a clean, dark-themed interface.
 
@@ -27,28 +28,64 @@ J2E OCR Translator is a Windows desktop application built with WPF (.NET 8) for 
 
 ## Getting Started
 
-1. **Requirements:**
-   - Windows 10/11
-   - .NET 8.0 SDK
-   - Python 3.12 (for OCR integration)
-   - Required Python packages: `transformers`, `torch`, `Pillow`, `jaconv`, `loguru`, etc.
+### Prerequisites
 
-2. **Setup:**
-   - Clone the repository.
-   - Install NuGet dependencies (`dotnet restore`).
-   - Configure your API keys for Google Translate and DeepL in a `.env` file:
-     ```
-     DEEPL_API_KEY=your_deepl_key
-     GOOGLE_API_KEYS=your_google_key
-     ```
-   - Ensure your Python environment and OCR models are set up as referenced in `custom_ocr/ocr.py`.
+| Requirement | Version | Notes |
+|---|---|---|
+| Windows | 10/11 | Required for WPF |
+| .NET SDK | 8.0+ | For building the app |
+| Python | 3.10+ (3.12 recommended) | For OCR and furigana sidecar |
 
-3. **Run:**
-   - Build and launch the app:
-     ```
-     dotnet build
-     dotnet run --project WpfAppTest.csproj
-     ```
+### 1. Clone & Restore
+
+```bash
+git clone <repo-url>
+cd Onscreen-Translator
+dotnet restore
+```
+
+### 2. Configure API Keys
+
+Create a `.env` file in the project root:
+
+```
+DEEPL_API_KEY=your_deepl_key
+GOOGLE_API_KEYS=your_google_key
+```
+
+### 3. Set Up Furigana Sidecar (Optional but Recommended)
+
+The furigana feature uses a Python sidecar service for morphological analysis. It runs locally on `127.0.0.1:8765`.
+
+**Disk space:** ~650 MB for models (Sudachi core dict ~50 MB, FLFL weights ~600 MB).
+
+```bash
+cd furigana-service
+
+# Windows
+install.bat
+run.bat
+
+# Linux / macOS
+chmod +x install.sh run.sh
+./install.sh
+./run.sh
+```
+
+The app can also start the sidecar automatically from the Settings tab when furigana is enabled.
+
+**Without the sidecar:** The app works fine — furigana just won't be available. All other features (OCR, translation, dictionary search) work without Python.
+
+### 4. Set Up OCR (Optional)
+
+If you need the custom OCR model, set up the Python environment as referenced in `custom_ocr/ocr.py`.
+
+### 5. Build & Run
+
+```bash
+dotnet build
+dotnet run --project WpfAppTest.csproj
+```
 
 ## Usage
 
@@ -56,6 +93,10 @@ J2E OCR Translator is a Windows desktop application built with WPF (.NET 8) for 
 - **OCR & Translate:** The app will extract Japanese text and translate it to English.
 - **Edit & Re-translate:** Double-click the translation to edit the original text and update the translation.
 - **Dictionary Search:** Use the search panel to look up Japanese words.
+- **Furigana:** Right-click the overlay or press **F** to cycle through views:
+  - **Translation** (default) — English translation
+  - **Furigana** — hiragana readings above kanji
+  - **Original** — raw OCR text
 
 ## Project Structure
 
@@ -63,6 +104,11 @@ J2E OCR Translator is a Windows desktop application built with WPF (.NET 8) for 
 - `MangaOCR.cs`: Python OCR integration via pythonnet.
 - `Translate.cs`: Translation API integration.
 - `DictionaryLookup.cs`: Japanese-English dictionary search.
+- `Controls/RubyTextBlock.cs`: Custom WPF control for hiragana ruby rendering.
+- `OverlayState.cs`: Per-region overlay state (translation, furigana, view mode).
+- `FuriganaServiceManager.cs`: Sidecar lifecycle, health checks, auto-degradation.
+- `Providers/Furigana/`: Furigana provider interfaces and HTTP client.
+- `furigana-service/`: Python FastAPI sidecar (SudachiPy + FLFL).
 - `custom_ocr/`: Python custom OCR implementation.
 
 ## License
@@ -75,3 +121,5 @@ This project is for educational and personal use. Please respect third-party API
 - [DeepL](https://www.deepl.com/)
 - [Google Translate](https://cloud.google.com/translate)
 - [WPF-UI](https://github.com/lepoco/wpfui)
+- [SudachiPy](https://github.com/WorksApplications/sudachi.rs) — Japanese morphological analyzer
+- [FLFL](https://github.com/Calvin-Xu/FLFL) — furigana generation LLM
