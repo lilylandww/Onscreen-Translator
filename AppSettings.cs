@@ -77,6 +77,16 @@ public class ProtectedStringConverter : JsonConverter<string>
     }
 }
 
+public class FuriganaSettings
+{
+    public bool Enabled { get; set; } = false;
+    public string SidecarUrl { get; set; } = "http://127.0.0.1:8765";
+    public bool AutoStartSidecar { get; set; } = true;
+    public bool UseFlflFallback { get; set; } = true;
+    public int FuriganaPort { get; set; } = 8765;
+    public int FlflLatencyThresholdMs { get; set; } = 2000;
+}
+
 public class AppSettings
 {
     private static readonly string SettingsPath = Path.Combine(
@@ -123,6 +133,9 @@ public class AppSettings
             ApiKey = ""
         }
     };
+
+    // Furigana sidecar configuration
+    public FuriganaSettings Furigana { get; set; } = new();
 
     // Convenience accessors
     public ProviderConfig GetProviderConfig(string providerName)

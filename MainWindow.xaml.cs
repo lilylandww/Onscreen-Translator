@@ -40,6 +40,9 @@ namespace WpfAppTest
         private bool _initializing = true;
         private SettingsWindow? _settingsWindow;
         private CancellationTokenSource? _ocrCts;
+        private readonly FuriganaServiceManager _furiganaServiceManager = new();
+        private readonly OverlayState _overlayState = new();
+        private CancellationTokenSource? _furiganaCts;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -165,6 +168,9 @@ namespace WpfAppTest
             _ocrCts?.Cancel();
             _ocrCts?.Dispose();
             _ocrCts = null;
+            _furiganaCts?.Cancel();
+            _furiganaCts?.Dispose();
+            _furiganaCts = null;
 
             // Dispose old providers
             if (_currentOcrProvider is IDisposable ocrDisposable)
@@ -316,12 +322,6 @@ namespace WpfAppTest
             if (TranslatedText != null)
             {
                 UpdateTextBlock(TranslatedText, scaledRegion, xDimension, yDimension);
-            }
-
-            // Perform furigana lookup for the OCR text
-            if (!string.IsNullOrWhiteSpace(OCRText))
-            {
-                PerformFuriganaLookup(OCRText);
             }
         }
 
@@ -624,6 +624,10 @@ namespace WpfAppTest
             _ocrCts?.Cancel();
             _ocrCts?.Dispose();
             _ocrCts = null;
+            _furiganaCts?.Cancel();
+            _furiganaCts?.Dispose();
+            _furiganaCts = null;
+            _furiganaServiceManager.Dispose();
             if (_currentOcrProvider is IDisposable ocrDisposable)
                 ocrDisposable.Dispose();
             foreach (var provider in _translationProviders)
@@ -641,6 +645,7 @@ namespace WpfAppTest
             CursorClipper.UnClipCursor();
             BG.Source = null;
             _systemTrayIcon?.Dispose();
+            _furiganaServiceManager.Dispose();
             GC.Collect();
             GC.WaitForPendingFinalizers();
         }
@@ -652,7 +657,8 @@ namespace WpfAppTest
             KeyDown += HandleKeyDown;
             SetImageToBackground();
             SearchToggleButton.ToolTip = "Show Dictionary Search";
-            FuriganaToggleButton.ToolTip = "Show Furigana Readings";
+            // TODO: re-enable in Phase 3 (toggle overlay view)
+            FuriganaToggleButton.IsEnabled = false;
 
             InitializeTranslationProviderComboBox();
             InitializeModelComboBoxes();
@@ -894,8 +900,6 @@ namespace WpfAppTest
 
             SearchToggleButton.Checked -= SearchToggleButton_Checked;
             SearchToggleButton.Unchecked -= SearchToggleButton_Unchecked;
-            FuriganaToggleButton.Checked -= FuriganaToggleButton_Checked;
-            FuriganaToggleButton.Unchecked -= FuriganaToggleButton_Unchecked;
             CaptureModeToggleButton.Checked -= CaptureModeToggleButton_Checked;
             CaptureModeToggleButton.Unchecked -= CaptureModeToggleButton_Unchecked;
             OcrModelComboBox.SelectionChanged -= OcrModelComboBox_SelectionChanged;
@@ -944,6 +948,9 @@ namespace WpfAppTest
                 _ocrCts?.Cancel();
                 _ocrCts?.Dispose();
                 _ocrCts = null;
+                _furiganaCts?.Cancel();
+                _furiganaCts?.Dispose();
+                _furiganaCts = null;
 
                 // Dispose old provider and create new one
                 if (_currentOcrProvider is IDisposable disposable)
@@ -1012,18 +1019,6 @@ namespace WpfAppTest
         {
             SearchPanel.Visibility = Visibility.Collapsed;
             SearchToggleButton.ToolTip = "Show Dictionary Search";
-        }
-
-        private void FuriganaToggleButton_Checked(object sender, RoutedEventArgs e)
-        {
-            FuriganaPanel.Visibility = Visibility.Visible;
-            FuriganaToggleButton.ToolTip = "Hide Furigana Readings";
-        }
-
-        private void FuriganaToggleButton_Unchecked(object sender, RoutedEventArgs e)
-        {
-            FuriganaPanel.Visibility = Visibility.Collapsed;
-            FuriganaToggleButton.ToolTip = "Show Furigana Readings";
         }
 
         private void CaptureModeToggleButton_Checked(object sender, RoutedEventArgs e)
@@ -1160,44 +1155,5 @@ namespace WpfAppTest
             }
         }
 
-        private void PerformFuriganaLookup(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                Console.WriteLine("OCR text is empty or whitespace.");
-                return;
-            }
-
-            try
-            {
-                List<JapaneseWord> furiganaResults = FuriganaLookup.GetFuriganaForText(text);
-
-                if (furiganaResults.Count == 0)
-                {
-                    FuriganaResultsListBox.ItemsSource = new List<JapaneseWord>
-                    {
-                        new("No furigana found", "", ["No kanji detected in the text"])
-                    };
-                    FuriganaCountText.Text = "0 readings found";
-                    FuriganaCountText.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    FuriganaResultsListBox.ItemsSource = furiganaResults;
-                    FuriganaCountText.Text = $"{furiganaResults.Count} reading{(furiganaResults.Count > 1 ? "s" : "")} found";
-                    FuriganaCountText.Visibility = Visibility.Visible;
-                }
-            }
-            catch (Exception ex)
-            {
-                FuriganaResultsListBox.ItemsSource = new List<JapaneseWord>
-                {
-                    new("Error", "", [$"Error during furigana lookup: {ex.Message}"])
-                };
-                FuriganaCountText.Text = "Furigana lookup failed";
-                FuriganaCountText.Visibility = Visibility.Visible;
-                Console.WriteLine($"Furigana Lookup Error: {ex}");
-            }
-        }
     }
 }

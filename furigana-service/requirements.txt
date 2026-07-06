@@ -1,0 +1,9 @@
+sudachipy>=0.6.11
+sudachidict-core>=20240709
+jaconv>=0.4
+fastapi>=0.110
+uvicorn[standard]>=0.27
+transformers>=4.40
+torch>=2.2
+bitsandbytes>=0.43
+pydantic>=2.6

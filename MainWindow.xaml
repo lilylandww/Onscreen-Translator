@@ -220,9 +220,7 @@
                 </ToggleButton>
                 <ToggleButton
                     x:Name="FuriganaToggleButton"
-                    Checked="FuriganaToggleButton_Checked"
-                    Unchecked="FuriganaToggleButton_Unchecked"
-                    ToolTip="Toggle Furigana Readings">
+                    ToolTip="Furigana (Phase 3)">
                     <wpfui:SymbolIcon Symbol="ReadingList24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
                 <ToggleButton
@@ -383,91 +381,6 @@
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Border>
-            </StackPanel>
-        </Border>
-
-        <!-- Furigana Panel -->
-        <Border
-            x:Name="FuriganaPanel"
-            HorizontalAlignment="Right"
-            VerticalAlignment="Top"
-            Margin="15"
-            MaxWidth="400"
-            Padding="12"
-            CornerRadius="12"
-            Visibility="Collapsed">
-            <Border.Background>
-                <SolidColorBrush Color="#2C2C2C" Opacity="0.95"/>
-            </Border.Background>
-            <Border.Effect>
-                <DropShadowEffect
-                    BlurRadius="24"
-                    Direction="-90"
-                    Opacity="0.4"
-                    ShadowDepth="4"/>
-            </Border.Effect>
-            
-            <StackPanel Orientation="Vertical">
-                <!-- Header -->
-                <TextBlock
-                    Text="Furigana Readings"
-                    FontWeight="SemiBold"
-                    FontSize="14"
-                    Foreground="{wpfui:ThemeResource TextFillColorPrimaryBrush}"
-                    Margin="0,0,0,8"/>
-                
-                <!-- Results Count -->
-                <TextBlock
-                    x:Name="FuriganaCountText"
-                    Text=""
-                    FontSize="11"
-                    Foreground="{wpfui:ThemeResource TextFillColorSecondaryBrush}"
-                    Margin="0,0,0,8"
-                    Visibility="Collapsed"/>
-
-                <!-- Furigana Results List -->
-                <Border
-                    CornerRadius="8"
-                    Background="{wpfui:ThemeResource ControlFillColorDefaultBrush}"
-                    BorderBrush="{wpfui:ThemeResource ControlStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    MaxHeight="300">
-                    <ScrollViewer 
-                        VerticalScrollBarVisibility="Auto"
-                        HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl x:Name="FuriganaResultsListBox">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border
-                                        Background="Transparent"
-                                        Padding="12,10"
-                                        BorderBrush="{wpfui:ThemeResource ControlStrokeColorDefaultBrush}"
-                                        BorderThickness="0,0,0,1">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="Transparent"/>
-                                                <Style.Triggers>
-                                                    <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Background" Value="{wpfui:ThemeResource SubtleFillColorSecondaryBrush}"/>
-                                                    </Trigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <StackPanel>
-                                            <!-- Word and Reading -->
-                                            <TextBlock Margin="0,0,0,4">
-                                                <Run Text="{Binding Word}" FontWeight="SemiBold" FontSize="16" Foreground="{wpfui:ThemeResource TextFillColorPrimaryBrush}"/>
-                                                <Run Text="  [" Foreground="{wpfui:ThemeResource TextFillColorTertiaryBrush}"/>
-                                                <Run Text="{Binding Reading}" Foreground="{wpfui:ThemeResource TextFillColorSecondaryBrush}" FontSize="14"/>
-                                                <Run Text="]" Foreground="{wpfui:ThemeResource TextFillColorTertiaryBrush}"/>
-                                            </TextBlock>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
