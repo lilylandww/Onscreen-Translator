@@ -8,10 +8,15 @@ cd "$SCRIPT_DIR"
 # shellcheck disable=SC1091
 source venv/bin/activate
 
-# Set model paths
-export MODELS_DIR="$SCRIPT_DIR/models"
-export HF_HOME="$MODELS_DIR/huggingface"
-export SUDACHIDICT_DIR="$MODELS_DIR/sudachi"
+# Model paths -- override any of these to share models across machines.
+# Example: MODELS_DIR=/mnt/nas/models ./run.sh
+export MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
+export HF_HOME="${HF_HOME:-$MODELS_DIR/huggingface}"
+export SUDACHIDICT_DIR="${SUDACHIDICT_DIR:-$MODELS_DIR/sudachi}"
+
+# FLFL model: HuggingFace model ID or absolute path to a local copy.
+# Example: FLFL_MODEL=/mnt/nas/models/huggingface/hub/models--Calvin-Xu--FLFL ./run.sh
+export FLFL_MODEL="${FLFL_MODEL:-Calvin-Xu/FLFL}"
 
 PORT="${PORT:-8765}"
 
@@ -29,4 +34,8 @@ elif command -v ss >/dev/null 2>&1; then
 fi
 
 echo "Starting Furigana Service on 127.0.0.1:${PORT}..."
+echo "  Models dir:    $MODELS_DIR"
+echo "  HF cache:      $HF_HOME"
+echo "  Sudachi dict:  $SUDACHIDICT_DIR"
+echo "  FLFL model:    $FLFL_MODEL"
 exec uvicorn server:app --host 127.0.0.1 --port "$PORT"

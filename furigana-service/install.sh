@@ -21,10 +21,11 @@ source venv/bin/activate
 pip install --upgrade pip -q
 pip install -r requirements.txt
 
-# Set up models directory and env vars
-export MODELS_DIR="$SCRIPT_DIR/models"
-export HF_HOME="$MODELS_DIR/huggingface"
-export SUDACHIDICT_DIR="$MODELS_DIR/sudachi"
+# Set up models directory -- override MODELS_DIR to use a shared/network path.
+# Example: MODELS_DIR=/mnt/nas/models ./install.sh
+export MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
+export HF_HOME="${HF_HOME:-$MODELS_DIR/huggingface}"
+export SUDACHIDICT_DIR="${SUDACHIDICT_DIR:-$MODELS_DIR/sudachi}"
 mkdir -p "$HF_HOME" "$SUDACHIDICT_DIR"
 
 # Download Sudachi core dictionary
@@ -56,3 +57,7 @@ chmod +x run.sh 2>/dev/null || true
 echo ""
 echo "=== Installation complete ==="
 echo "Run './run.sh' to start the service."
+echo ""
+echo "To share models across machines, set these before running:"
+echo "  export MODELS_DIR=/path/to/shared/models"
+echo "  export FLFL_MODEL=/path/to/local/FLFL  (or a HuggingFace model ID)"

@@ -103,6 +103,7 @@ class StatusResponse(BaseModel):
     flfl_loaded: bool
     flfl_loading: bool
     flfl_latency_ms: Optional[float] = None
+    flfl_model: str
 
 
 class FuriganaSegment(BaseModel):
@@ -187,6 +188,10 @@ _flfl_lock = threading.Lock()
 
 _degraded = False  # when True, never attempt FLFL
 
+# FLFL model: HuggingFace model ID or absolute path to a local copy.
+# Set via FLFL_MODEL env var.  Example: FLFL_MODEL=/mnt/nas/models/FLFL
+FLFL_MODEL = os.environ.get("FLFL_MODEL", "Calvin-Xu/FLFL")
+
 
 # ---------------------------------------------------------------------------
 # Sudachi initialisation
@@ -235,11 +240,11 @@ def _init_flfl() -> bool:
                 trf = _import_transformers()
                 _ = _import_torch()
                 _ = _import_bitsandbytes()
-                logger.info("Loading FLFL tokenizer...")
-                _flfl_tokenizer_obj = trf.AutoTokenizer.from_pretrained("Calvin-Xu/FLFL")
-                logger.info("Loading FLFL model (4-bit, device_map=auto)...")
+                logger.info("Loading FLFL tokenizer from %s ...", FLFL_MODEL)
+                _flfl_tokenizer_obj = trf.AutoTokenizer.from_pretrained(FLFL_MODEL)
+                logger.info("Loading FLFL model (4-bit, device_map=auto) from %s ...", FLFL_MODEL)
                 _flfl_model = trf.AutoModelForCausalLM.from_pretrained(
-                    "Calvin-Xu/FLFL",
+                    FLFL_MODEL,
                     load_in_4bit=True,
                     device_map="auto",
                 )
@@ -594,6 +599,7 @@ async def status() -> StatusResponse:
         flfl_loaded=_flfl_loaded,
         flfl_loading=_flfl_loading,
         flfl_latency_ms=_flfl_latency_ms,
+        flfl_model=FLFL_MODEL,
     )
 
 

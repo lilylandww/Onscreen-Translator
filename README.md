@@ -76,6 +76,35 @@ The app can also start the sidecar automatically from the Settings tab when furi
 
 **Without the sidecar:** The app works fine — furigana just won't be available. All other features (OCR, translation, dictionary search) work without Python.
 
+#### Sharing Models Across Machines
+
+To reuse downloaded models (Sudachi dict + FLFL weights) from a shared location (NAS, network drive, etc.), set these environment variables before running `install.sh`/`run.sh`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODELS_DIR` | `<script>/models` | Base directory for all model files |
+| `HF_HOME` | `$MODELS_DIR/huggingface` | Hugging Face cache directory |
+| `SUDACHIDICT_DIR` | `$MODELS_DIR/sudachi` | Sudachi dictionary directory |
+| `FLFL_MODEL` | `Calvin-Xu/FLFL` | FLFL model: HuggingFace ID or local path |
+
+Example — point to a NAS share:
+
+```bash
+export MODELS_DIR=/mnt/nas/models
+export FLFL_MODEL=/mnt/nas/models/huggingface/hub/models--Calvin-Xu--FLFL
+./run.sh
+```
+
+On Windows:
+
+```bat
+set MODELS_DIR=\\nas\share\models
+set FLFL_MODEL=\\nas\share\models\huggingface\hub\models--Calvin-Xu--FLFL
+run.bat
+```
+
+Install once on the machine with the most storage, then point all other machines to the same `MODELS_DIR`. The only local requirement is the Python venv with dependencies — models are read from the shared path.
+
 ### 4. Set Up OCR (Optional)
 
 If you need the custom OCR model, set up the Python environment as referenced in `custom_ocr/ocr.py`.

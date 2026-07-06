@@ -19,10 +19,11 @@ call venv\Scripts\activate.bat
 pip install --upgrade pip -q
 pip install -r requirements.txt
 
-REM Set up models directory
-set MODELS_DIR=%~dp0models
-set HF_HOME=%MODELS_DIR%\huggingface
-set SUDACHIDICT_DIR=%MODELS_DIR%\sudachi
+REM Set up models directory -- override MODELS_DIR to use a shared/network path.
+REM Example: set MODELS_DIR=\\nas\share\models && install.bat
+if "%MODELS_DIR%"=="" set MODELS_DIR=%~dp0models
+if "%HF_HOME%"=="" set HF_HOME=%MODELS_DIR%\huggingface
+if "%SUDACHIDICT_DIR%"=="" set SUDACHIDICT_DIR=%MODELS_DIR%\sudachi
 if not exist "%HF_HOME%" mkdir "%HF_HOME%"
 if not exist "%SUDACHIDICT_DIR%" mkdir "%SUDACHIDICT_DIR%"
 
@@ -37,3 +38,7 @@ python -c "from transformers import AutoTokenizer; print('Tokenizer ready.')" 2>
 echo.
 echo === Installation complete ===
 echo Run 'run.bat' to start the service.
+echo.
+echo To share models across machines, set these before running:
+echo   set MODELS_DIR=\\nas\share\models
+echo   set FLFL_MODEL=\\path\to\local\FLFL  (or a HuggingFace model ID)

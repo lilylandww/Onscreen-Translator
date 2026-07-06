@@ -41,6 +41,24 @@ run.bat
 
 The service starts on `http://127.0.0.1:8765` (configurable via `PORT` env var).
 
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `8765` | HTTP listen port |
+| `MODELS_DIR` | `<script>/models` | Base directory for all model files |
+| `HF_HOME` | `$MODELS_DIR/huggingface` | Hugging Face cache directory |
+| `SUDACHIDICT_DIR` | `$MODELS_DIR/sudachi` | Sudachi dictionary directory |
+| `FLFL_MODEL` | `Calvin-Xu/FLFL` | FLFL model: HuggingFace model ID or absolute path to a local copy |
+
+To share models across machines, install once and point all machines to the same `MODELS_DIR`:
+
+```bash
+export MODELS_DIR=/mnt/nas/models
+export FLFL_MODEL=/mnt/nas/models/huggingface/hub/models--Calvin-Xu--FLFL
+./run.sh
+```
+
 ## API Contract
 
 ### `GET /health`
@@ -60,7 +78,8 @@ Service status.
   "sudachi_ready": true,
   "flfl_loaded": false,
   "flfl_loading": false,
-  "flfl_latency_ms": null
+  "flfl_latency_ms": null,
+  "flfl_model": "Calvin-Xu/FLFL"
 }
 ```
 
