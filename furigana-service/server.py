@@ -212,7 +212,11 @@ def _init_sudachi() -> None:
 
 
 def _init_flfl() -> bool:
-    """Lazy-load the FLFL model on first use. Returns True on success."""
+    """Lazy-load the FLFL model on first use. Returns True on success.
+
+    Thread-safe: only one thread performs the actual load. Others spin-wait
+    outside the lock until loading completes.
+    """
     global _flfl_model, _flfl_tokenizer_obj, _flfl_loaded, _flfl_loading
 
     if _degraded:
@@ -223,12 +227,38 @@ def _init_flfl() -> bool:
         if _flfl_loaded:
             return True
         if _flfl_loading:
-            # Another thread is currently loading -- spin-wait.
-            _flfl_lock.release()
-            while _flfl_loading:
-                time.sleep(0.1)
-            _flfl_lock.acquire()
-        return _flfl_loaded
+            # Another thread is currently loading -- fall through to spin-wait
+            pass
+        else:
+            _flfl_loading = True
+            try:
+                trf = _import_transformers()
+                _ = _import_torch()
+                _ = _import_bitsandbytes()
+                logger.info("Loading FLFL tokenizer...")
+                _flfl_tokenizer_obj = trf.AutoTokenizer.from_pretrained("Calvin-Xu/FLFL")
+                logger.info("Loading FLFL model (4-bit, device_map=auto)...")
+                _flfl_model = trf.AutoModelForCausalLM.from_pretrained(
+                    "Calvin-Xu/FLFL",
+                    load_in_4bit=True,
+                    device_map="auto",
+                )
+                _flfl_loaded = True
+                logger.info("FLFL model loaded successfully")
+            except Exception:
+                logger.exception("Failed to load FLFL model")
+                _flfl_model = None
+                _flfl_tokenizer_obj = None
+                _flfl_loaded = False
+            finally:
+                _flfl_loading = False
+            return _flfl_loaded
+
+    # We reach here when _flfl_loading was True (another thread is loading).
+    # Spin-wait outside the lock.
+    while _flfl_loading:
+        time.sleep(0.1)
+    return _flfl_loaded
 
 
 # ---------------------------------------------------------------------------
@@ -340,10 +370,27 @@ def _sudachi_to_segments(text: str) -> List[FuriganaSegment]:
         segments: List[FuriganaSegment] = []
         for token in tokens:
             surface = token.surface()
+            pos = ','.join(token.part_of_speech())
+
+            # OOV detection via dict_id (=-1 for out-of-vocabulary words).
+            # Fall back to heuristic if dict_id is unavailable in this
+            # sudachipy version.
+            try:
+                word_info = token.get_word_info()
+                dict_id = word_info.dict_id
+                is_oov = (dict_id == -1)
+            except (AttributeError, Exception):
+                # Fallback: only flag as OOV if surface has kanji and no reading
+                is_oov = False  # conservative default
+
             reading_form = token.reading_form()
             reading = jaconv.kata2hira(reading_form) if reading_form else None
-            pos = ','.join(token.part_of_speech())
-            is_oov = not bool(reading)
+
+            # Secondary heuristic: if still not flagged OOV but surface has
+            # kanji and no reading, treat as OOV.
+            if not is_oov and not reading and _has_kanji(surface):
+                is_oov = True
+
             segments.append(
                 FuriganaSegment(
                     surface=surface, reading=reading, pos=pos, is_oov=is_oov
@@ -375,7 +422,13 @@ def _has_kanji(s: str) -> bool:
 def _group_consecutive_kanji(
     segments: List[FuriganaSegment],
 ) -> List[FuriganaSegment]:
-    """Merge adjacent segments whose surfaces both contain kanji into one."""
+    """Merge adjacent kanji segments belonging to the same POS into one.
+
+    Only merges when:
+    - Both surfaces contain kanji
+    - Both have the same POS string
+    - Neither is OOV (OOV segments stay separate for individual FLFL fallback)
+    """
     if not segments:
         return segments
 
@@ -383,16 +436,20 @@ def _group_consecutive_kanji(
     i = 0
     while i < len(segments):
         curr = segments[i]
-        if _has_kanji(curr.surface):
+        if _has_kanji(curr.surface) and not curr.is_oov:
             surfaces = [curr.surface]
             readings = [curr.reading or '']
             pos = curr.pos
             is_oov = curr.is_oov
             j = i + 1
-            while j < len(segments) and _has_kanji(segments[j].surface):
+            while (
+                j < len(segments)
+                and _has_kanji(segments[j].surface)
+                and not segments[j].is_oov
+                and segments[j].pos == pos
+            ):
                 surfaces.append(segments[j].surface)
                 readings.append(segments[j].reading or '')
-                is_oov = is_oov or segments[j].is_oov
                 j += 1
             if j > i + 1:
                 merged_reading = ''.join(readings) if any(readings) else None
@@ -423,37 +480,47 @@ def _merge_flfl_into_oov(
     segments: List[FuriganaSegment],
     flfl_segments: List[FuriganaSegment],
 ) -> List[FuriganaSegment]:
-    """Replace OOV segments with FLFL readings via character-offset mapping."""
+    """Replace OOV segments with FLFL readings via character-offset mapping.
+
+    FLFL readings are distributed proportionally across the surface characters
+    of each FLFL segment, so that a multi-character kanji surface like
+    "国境" with reading "くにざかい" maps each surface character to its
+    share of the reading rather than assigning the full reading to each char.
+    """
     if not flfl_segments or (len(flfl_segments) == 1 and flfl_segments[0].is_oov):
         return segments
 
-    # Build character → reading map from FLFL segments
+    # Build character -> reading map from FLFL segments using proportional split.
+    # Each surface character gets a slice of the reading proportional to its
+    # position within the surface.
     char_readings: dict[int, str] = {}
     offset = 0
     for seg in flfl_segments:
-        if seg.reading:
-            for i in range(len(seg.surface)):
-                char_readings[offset + i] = seg.reading
+        if seg.reading and seg.surface:
+            surf_len = len(seg.surface)
+            read_len = len(seg.reading)
+            for i in range(surf_len):
+                start = int(i * read_len / surf_len)
+                end = int((i + 1) * read_len / surf_len)
+                char_readings[offset + i] = seg.reading[start:end]
         offset += len(seg.surface)
 
-    result: List[FuriganaSegment] = []
+    result: List[FuriganaSegment] = list(segments)
     offset = 0
-    for seg in segments:
+    for i, seg in enumerate(result):
         if seg.is_oov or not seg.reading:
-            reading = char_readings.get(offset)
-            if reading:
-                result.append(
-                    FuriganaSegment(
-                        surface=seg.surface,
-                        reading=reading,
-                        pos=seg.pos,
-                        is_oov=False,
-                    )
+            reading_chars = []
+            for j in range(len(seg.surface)):
+                if (offset + j) in char_readings:
+                    reading_chars.append(char_readings[offset + j])
+            merged_reading = ''.join(reading_chars)
+            if merged_reading:
+                result[i] = FuriganaSegment(
+                    surface=seg.surface,
+                    reading=merged_reading,
+                    pos=seg.pos,
+                    is_oov=False,
                 )
-            else:
-                result.append(seg)
-        else:
-            result.append(seg)
         offset += len(seg.surface)
 
     return result
@@ -608,6 +675,14 @@ async def degrade_route(req: DegradeRequest) -> DegradeResponse:
     _degraded = True
     logger.info("Service degraded per request (target=%s)", req.target)
     return DegradeResponse(ok=True, degraded=True)
+
+
+@app.post("/reset-degradation", response_model=DegradeResponse)
+async def reset_degradation() -> DegradeResponse:
+    global _degraded
+    _degraded = False
+    logger.info("Degradation reset -- FLFL re-enabled")
+    return DegradeResponse(ok=True, degraded=False)
 
 
 # ---------------------------------------------------------------------------

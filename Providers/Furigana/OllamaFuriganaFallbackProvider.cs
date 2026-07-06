@@ -107,9 +107,17 @@ public class OllamaFuriganaFallbackProvider : IFuriganaFallbackProvider, IDispos
     /// <summary>
     /// Parses the LLM's ruby-tagged output into <see cref="FuriganaSegment"/> list.
     /// Handles patterns like <c>&lt;ruby&gt;漢字&lt;rt&gt;かんじ&lt;/rt&gt;&lt;/ruby&gt;</c>.
+    /// Strips special tokens, validates alignment against the original text,
+    /// and handles trailing-kana duplication in FLFL-style output.
     /// </summary>
     internal static List<FuriganaSegment> ParseRubyOutput(string rubyOutput, string originalText)
     {
+        // Step 1: Strip special tokens
+        rubyOutput = System.Text.RegularExpressions.Regex.Replace(
+            rubyOutput,
+            @"<\|endoftext\|>|<\|im_start\|>|<\|im_end\|>|<\|pad\|>",
+            "");
+
         var segments = new List<FuriganaSegment>();
         var rubyPattern = new System.Text.RegularExpressions.Regex(
             @"<ruby>(.+?)<rt>(.*?)</rt></ruby>",
@@ -120,7 +128,7 @@ public class OllamaFuriganaFallbackProvider : IFuriganaFallbackProvider, IDispos
 
         foreach (System.Text.RegularExpressions.Match match in matches)
         {
-            // Emit any plain text before this ruby tag
+            // Emit any plain text before this ruby tag as a segment with null reading
             if (match.Index > lastIndex)
             {
                 var plainText = rubyOutput[lastIndex..match.Index];
@@ -133,12 +141,12 @@ public class OllamaFuriganaFallbackProvider : IFuriganaFallbackProvider, IDispos
             var surface = match.Groups[1].Value;
             var reading = match.Groups[2].Value;
 
-            // Combine surface + any trailing kana that follows the </ruby> tag
+            // Handle trailing kana duplication:
+            // e.g. <ruby>鰤<rt>ぶり</rt></ruby>ぶり → surface "鰤ぶり", reading "ぶり"
             int afterRuby = match.Index + match.Length;
             string combinedSurface = surface;
             string? combinedReading = string.IsNullOrEmpty(reading) ? null : reading;
 
-            // Check for trailing kana duplication (e.g. <ruby>鰤<rt>ぶり</rt></ruby>ぶり)
             if (afterRuby < rubyOutput.Length)
             {
                 int kanaEnd = afterRuby;
@@ -148,16 +156,34 @@ public class OllamaFuriganaFallbackProvider : IFuriganaFallbackProvider, IDispos
                 if (kanaEnd > afterRuby)
                 {
                     string trailing = rubyOutput[afterRuby..kanaEnd];
-                    if (trailing.Length <= 2 && reading.Contains(trailing, StringComparison.Ordinal))
+
+                    // Only merge trailing kana if:
+                    // 1. The trailing text exactly continues the reading string, AND
+                    // 2. Merging produces a surface that aligns with the original text
+                    if (!string.IsNullOrEmpty(reading) && reading.EndsWith(trailing, StringComparison.Ordinal))
                     {
-                        // Trailing kana is part of the reading — extend the surface
-                        combinedSurface = surface + trailing;
-                        combinedReading = reading;
-                        lastIndex = kanaEnd;
+                        // Trailing kana is a suffix of the reading — extend the surface
+                        string candidateSurface = surface + trailing;
+                        // Check that this candidate surface aligns with the original text
+                        string originalNorm = NormalizeWhitespace(originalText);
+                        string surfacesSoFar = string.Concat(segments.Select(s => s.Surface)) + candidateSurface;
+                        string remainingOutput = rubyOutput[kanaEnd..];
+                        // Quick check: does the candidate surface exist in the remaining original text?
+                        if (originalNorm.Contains(surfacesSoFar.Replace(" ", ""), StringComparison.Ordinal) ||
+                            originalNorm.StartsWith(surfacesSoFar.Replace(" ", ""), StringComparison.Ordinal))
+                        {
+                            combinedSurface = candidateSurface;
+                            combinedReading = reading;
+                            lastIndex = kanaEnd;
+                        }
+                        else
+                        {
+                            lastIndex = match.Index + match.Length;
+                        }
                     }
                     else
                     {
-                        // Trailing kana is not a duplicate — add as separate segment later
+                        // Trailing kana is not a reading suffix — add as separate segment later
                         lastIndex = match.Index + match.Length;
                     }
                 }
@@ -184,13 +210,41 @@ public class OllamaFuriganaFallbackProvider : IFuriganaFallbackProvider, IDispos
             }
         }
 
-        // Fallback: if parsing produced nothing useful, emit the original text as a single segment
+        // Fallback: if parsing produced nothing useful, emit the original text as a single OOV segment
         if (segments.Count == 0 && !string.IsNullOrWhiteSpace(originalText))
         {
             segments.Add(new FuriganaSegment(originalText, null, "", true));
         }
 
+        // Alignment validation: concatenate all surfaces and compare to original text
+        if (segments.Count > 0 && !string.IsNullOrWhiteSpace(originalText))
+        {
+            string concatenatedSurfaces = string.Concat(segments.Select(s => s.Surface));
+            string originalNorm = NormalizeWhitespace(originalText);
+            string surfacesNorm = NormalizeWhitespace(concatenatedSurfaces);
+
+            if (!string.Equals(originalNorm, surfacesNorm, StringComparison.Ordinal))
+            {
+                // Alignment failed — return original text as a single OOV segment
+                Debug.WriteLine(
+                    $"[OllamaFuriganaFallbackProvider] Alignment validation failed: " +
+                    $"expected '{originalNorm}', got '{surfacesNorm}'. Falling back to OOV.");
+                return new List<FuriganaSegment>
+                {
+                    new FuriganaSegment(originalText, null, "", true)
+                };
+            }
+        }
+
         return segments;
+    }
+
+    /// <summary>
+    /// Removes all whitespace for alignment comparison.
+    /// </summary>
+    private static string NormalizeWhitespace(string text)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", "");
     }
 
     private static bool IsKana(char c)

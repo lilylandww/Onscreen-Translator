@@ -613,6 +613,9 @@ public partial class SettingsWindow : Window
         // Subscribe to status changes from the shared service manager
         FuriganaServiceManager.Instance.StatusChanged += OnFuriganaStatusChanged;
 
+        // Ensure we unsubscribe when the window is closed (prevents event handler leak on singleton)
+        Closed += (s, e) => FuriganaServiceManager.Instance.StatusChanged -= OnFuriganaStatusChanged;
+
         // Show current status
         UpdateFuriganaStatusFromManager();
     }

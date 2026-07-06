@@ -340,10 +340,13 @@ namespace WpfAppTest
                 FuriganaToggleButton.IsChecked = false;
 
             // Kick off furigana fetch in parallel with translation (non-blocking)
-            _furiganaCts?.Cancel();
-            _furiganaCts?.Dispose();
-            _furiganaCts = new CancellationTokenSource();
-            _ = FetchFuriganaAsync(text, _furiganaCts.Token);
+            if (_settings.Furigana.Enabled)
+            {
+                _furiganaCts?.Cancel();
+                _furiganaCts?.Dispose();
+                _furiganaCts = new CancellationTokenSource();
+                _ = FetchFuriganaAsync(text, _furiganaCts.Token);
+            }
 
             // Fetch translation
             TranslatedText = await GetTranslatedTextAsync(OCRText);
@@ -720,7 +723,9 @@ namespace WpfAppTest
         /// <summary>
         /// Merges LLM-generated furigana readings into the Sudachi segment list.
         /// For each OOV or missing-reading segment, finds a matching LLM segment
-        /// by surface prefix and copies its reading.
+        /// by exact surface equality and copies its reading. Advances through the
+        /// LLM segment list for every segment processed, so non-ruby LLM segments
+        /// don't block progress.
         /// </summary>
         private static List<FuriganaSegment> MergeLlmFallback(
             List<FuriganaSegment> sudachiSegments,
@@ -738,16 +743,17 @@ namespace WpfAppTest
                 if (!seg.IsOov && !string.IsNullOrEmpty(seg.Reading))
                     continue;
 
-                // Try to find an LLM segment whose surface starts with or matches this surface
-                if (llmIndex < llmSegments.Count)
+                // Scan forward through LLM segments to find an exact surface match
+                while (llmIndex < llmSegments.Count)
                 {
                     var llmSeg = llmSegments[llmIndex];
-                    if (!string.IsNullOrEmpty(llmSeg.Reading) &&
-                        (llmSeg.Surface.StartsWith(seg.Surface, StringComparison.Ordinal) ||
-                         seg.Surface.StartsWith(llmSeg.Surface, StringComparison.Ordinal)))
+                    llmIndex++;
+
+                    if (string.Equals(seg.Surface, llmSeg.Surface, StringComparison.Ordinal) &&
+                        !string.IsNullOrEmpty(llmSeg.Reading))
                     {
                         merged[i] = seg with { Reading = llmSeg.Reading, IsOov = false };
-                        llmIndex++;
+                        break;
                     }
                 }
             }
@@ -963,10 +969,13 @@ namespace WpfAppTest
             _overlayState.OcrText = OCRText;
 
             // Kick off furigana fetch for the edited text
-            _furiganaCts?.Cancel();
-            _furiganaCts?.Dispose();
-            _furiganaCts = new CancellationTokenSource();
-            _ = FetchFuriganaAsync(OCRText, _furiganaCts.Token);
+            if (_settings.Furigana.Enabled)
+            {
+                _furiganaCts?.Cancel();
+                _furiganaCts?.Dispose();
+                _furiganaCts = new CancellationTokenSource();
+                _ = FetchFuriganaAsync(OCRText, _furiganaCts.Token);
+            }
 
             TranslatedText = await GetTranslatedTextAsync(editTextBox.Text);
             _overlayState.Translation = TranslatedText;
@@ -1028,6 +1037,21 @@ namespace WpfAppTest
             }
         }
 
+        /// <summary>
+        /// Disposes all furigana-related resources (CTS, providers, fallback).
+        /// Extracted so both Quit() and Window_Closing() perform the same cleanup.
+        /// </summary>
+        private void DisposeFuriganaResources()
+        {
+            _furiganaCts?.Cancel();
+            _furiganaCts?.Dispose();
+            _furiganaCts = null;
+            _furiganaProvider?.Dispose();
+            _furiganaProvider = null;
+            _ollamaFallback?.Dispose();
+            _ollamaFallback = null;
+        }
+
         private void Quit()
         {
             if (editTextBox != null)
@@ -1039,13 +1063,8 @@ namespace WpfAppTest
             _ocrCts?.Cancel();
             _ocrCts?.Dispose();
             _ocrCts = null;
-            _furiganaCts?.Cancel();
-            _furiganaCts?.Dispose();
-            _furiganaCts = null;
-            _furiganaProvider?.Dispose();
-            _furiganaProvider = null;
-            _ollamaFallback?.Dispose();
-            _ollamaFallback = null;
+            DisposeFuriganaResources();
+            _furiganaServiceManager.DegradedChanged -= OnFuriganaDegradedChanged;
             _furiganaServiceManager.Dispose();
             if (_currentOcrProvider is IDisposable ocrDisposable)
                 ocrDisposable.Dispose();
@@ -1064,6 +1083,8 @@ namespace WpfAppTest
             CursorClipper.UnClipCursor();
             BG.Source = null;
             _systemTrayIcon?.Dispose();
+            DisposeFuriganaResources();
+            _furiganaServiceManager.DegradedChanged -= OnFuriganaDegradedChanged;
             _furiganaServiceManager.Dispose();
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -1118,6 +1139,23 @@ namespace WpfAppTest
             if (IsMouseOver)
             {
                 TopButtonStack.Visibility = Visibility.Visible;
+            }
+
+            // Auto-start sidecar on launch if enabled
+            if (_settings.Furigana.Enabled && _settings.Furigana.AutoStartSidecar)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _furiganaServiceManager.StartAsync(
+                            degradationThresholdMs: _settings.Furigana.FlflLatencyThresholdMs);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[MainWindow] Sidecar auto-start failed: {ex.Message}");
+                    }
+                });
             }
         }
 
@@ -1310,6 +1348,7 @@ namespace WpfAppTest
             Loaded -= Window_Loaded;
             Unloaded -= Window_Unloaded;
             KeyDown -= HandleKeyDown;
+            _furiganaServiceManager.DegradedChanged -= OnFuriganaDegradedChanged;
             TopButtonStack.Visibility = Visibility.Collapsed;
             CancelButton.Click -= CancelItemClick;
             SettingsButton.Click -= SettingsButton_Click;

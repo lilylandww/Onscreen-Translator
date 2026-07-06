@@ -67,8 +67,8 @@ public class FuriganaServiceManager : IDisposable
     private int _restartAttempt;
 
     // --- Degradation monitoring ---
-    private int _consecutiveSlowFlflCount;
-    private bool _isDegraded;
+    private volatile int _consecutiveSlowFlflCount;
+    private volatile bool _isDegraded;
     private Timer? _degradationPollTimer;
 
     /// <summary>
@@ -375,23 +375,33 @@ public class FuriganaServiceManager : IDisposable
             try
             {
                 var status = await GetStatusAsync();
-                if (status?.FlflLatencyMs.HasValue == true && status.FlflLatencyMs.Value > thresholdMs)
+                bool shouldDegrade;
+                lock (_lock)
                 {
-                    _consecutiveSlowFlflCount++;
-                    Debug.WriteLine(
-                        $"[FuriganaServiceManager] FLFL slow ({status.FlflLatencyMs.Value:F0}ms > {thresholdMs}ms). " +
-                        $"Consecutive slow count: {_consecutiveSlowFlflCount}");
-                }
-                else
-                {
-                    _consecutiveSlowFlflCount = 0;
+                    if (status?.FlflLatencyMs.HasValue == true && status.FlflLatencyMs.Value > thresholdMs)
+                    {
+                        _consecutiveSlowFlflCount++;
+                        Debug.WriteLine(
+                            $"[FuriganaServiceManager] FLFL slow ({status.FlflLatencyMs.Value:F0}ms > {thresholdMs}ms). " +
+                            $"Consecutive slow count: {_consecutiveSlowFlflCount}");
+                    }
+                    else
+                    {
+                        _consecutiveSlowFlflCount = 0;
+                    }
+
+                    shouldDegrade = _consecutiveSlowFlflCount >= 3 && !_isDegraded;
+                    if (shouldDegrade)
+                    {
+                        _isDegraded = true;
+                    }
                 }
 
-                if (_consecutiveSlowFlflCount >= 3 && !_isDegraded)
+                if (shouldDegrade)
                 {
-                    _isDegraded = true;
                     await DegradeToOllamaAsync();
                     Debug.WriteLine("[FuriganaServiceManager] Auto-degraded to Ollama (FLFL slow).");
+                    // Fire event — subscribers should marshal to UI thread if needed
                     DegradedChanged?.Invoke(this, true);
                 }
             }
@@ -417,8 +427,11 @@ public class FuriganaServiceManager : IDisposable
     /// </summary>
     public void ResetDegradation()
     {
-        _isDegraded = false;
-        _consecutiveSlowFlflCount = 0;
+        lock (_lock)
+        {
+            _isDegraded = false;
+            _consecutiveSlowFlflCount = 0;
+        }
         Debug.WriteLine("[FuriganaServiceManager] Degradation reset — FLFL re-enabled.");
         DegradedChanged?.Invoke(this, false);
     }
