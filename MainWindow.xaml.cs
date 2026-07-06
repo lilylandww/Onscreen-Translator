@@ -1514,9 +1514,15 @@ namespace WpfAppTest
             UpdateScreenButton(displays);
         }
 
-        private void MoveToScreen(DisplayInfo screen)
+        private async void MoveToScreen(DisplayInfo screen)
         {
             Rect bounds = screen.ScaledBounds();
+
+            // Drop the previous monitor's frozen screenshot immediately so it
+            // can't bleed through during the (asynchronous) window relocation.
+            BackgroundBrush.Opacity = 0;
+            BG.Source = null;
+
             WindowState = WindowState.Normal;
             Left = bounds.X;
             Top = bounds.Y;
@@ -1524,7 +1530,31 @@ namespace WpfAppTest
             Height = bounds.Height;
             WindowState = WindowState.Maximized;
             FullWindow.Rect = new Rect(0, 0, bounds.Width, bounds.Height);
-            FreezeScreen();
+
+            // Setting WindowState/Left/Top/etc. only *queues* a Win32 move that
+            // WPF/Win32 commit asynchronously. The old fixed 150ms wait could
+            // fire before the HWND had actually moved, so GetAbsolutePosition()
+            // (MonitorFromWindow) and ActualWidth/Height still reported the
+            // *previous* monitor and we snapshotted its content. Wait until the
+            // window really reports it is on the target monitor before capturing.
+            await WaitForWindowOnScreenAsync(bounds);
+            SetImageToBackground();
+        }
+
+        private async Task WaitForWindowOnScreenAsync(Rect targetBounds)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                await Task.Delay(50);
+
+                System.Windows.Point pos = this.GetAbsolutePosition();
+                if (Math.Abs(pos.X - targetBounds.X) <= 1
+                    && Math.Abs(pos.Y - targetBounds.Y) <= 1)
+                {
+                    return;
+                }
+            }
         }
 
         private void UpdateScreenButton(IReadOnlyList<DisplayInfo> displays)
