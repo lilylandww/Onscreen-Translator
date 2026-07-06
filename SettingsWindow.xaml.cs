@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using WpfAppTest.Providers;
+using WpfAppTest.Providers.Furigana;
 
 namespace WpfAppTest;
 
@@ -44,8 +46,20 @@ public partial class SettingsWindow : Window
             };
         }
 
+        // Deep copy Furigana settings
+        _workingCopy.Furigana = new FuriganaSettings
+        {
+            Enabled = settings.Furigana.Enabled,
+            SidecarUrl = settings.Furigana.SidecarUrl,
+            AutoStartSidecar = settings.Furigana.AutoStartSidecar,
+            UseFlflFallback = settings.Furigana.UseFlflFallback,
+            FuriganaPort = settings.Furigana.FuriganaPort,
+            FlflLatencyThresholdMs = settings.Furigana.FlflLatencyThresholdMs
+        };
+
         InitializeOcrProviderComboBox();
         InitializeTranslationProviderComboBox();
+        LoadFuriganaSettings();
 
         _initializing = false;
 
@@ -542,6 +556,7 @@ public partial class SettingsWindow : Window
     {
         CollectOcrSettings();
         CollectTranslationSettings();
+        CollectFuriganaSettings();
 
         // Copy working copy back to real settings
         _settings.OcrProvider = _workingCopy.OcrProvider;
@@ -555,6 +570,14 @@ public partial class SettingsWindow : Window
             config.OcrModel = kvp.Value.OcrModel;
             config.TranslationModel = kvp.Value.TranslationModel;
         }
+
+        // Copy Furigana settings back
+        _settings.Furigana.Enabled = _workingCopy.Furigana.Enabled;
+        _settings.Furigana.SidecarUrl = _workingCopy.Furigana.SidecarUrl;
+        _settings.Furigana.AutoStartSidecar = _workingCopy.Furigana.AutoStartSidecar;
+        _settings.Furigana.UseFlflFallback = _workingCopy.Furigana.UseFlflFallback;
+        _settings.Furigana.FuriganaPort = _workingCopy.Furigana.FuriganaPort;
+        _settings.Furigana.FlflLatencyThresholdMs = _workingCopy.Furigana.FlflLatencyThresholdMs;
 
         try
         {
@@ -574,6 +597,244 @@ public partial class SettingsWindow : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    #endregion
+
+    #region Furigana Settings
+
+    private void LoadFuriganaSettings()
+    {
+        FuriganaEnabledCheckBox.IsChecked = _workingCopy.Furigana.Enabled;
+        FuriganaSidecarUrlTextBox.Text = _workingCopy.Furigana.SidecarUrl;
+        FuriganaAutoStartCheckBox.IsChecked = _workingCopy.Furigana.AutoStartSidecar;
+        FuriganaUseFlflCheckBox.IsChecked = _workingCopy.Furigana.UseFlflFallback;
+
+        // Subscribe to status changes from the shared service manager
+        FuriganaServiceManager.Instance.StatusChanged += OnFuriganaStatusChanged;
+
+        // Ensure we unsubscribe when the window is closed (prevents event handler leak on singleton)
+        Closed += (s, e) => FuriganaServiceManager.Instance.StatusChanged -= OnFuriganaStatusChanged;
+
+        // Show current status
+        UpdateFuriganaStatusFromManager();
+    }
+
+    private void CollectFuriganaSettings()
+    {
+        _workingCopy.Furigana.Enabled = FuriganaEnabledCheckBox.IsChecked == true;
+        _workingCopy.Furigana.SidecarUrl = FuriganaSidecarUrlTextBox.Text.Trim();
+        _workingCopy.Furigana.AutoStartSidecar = FuriganaAutoStartCheckBox.IsChecked == true;
+        _workingCopy.Furigana.UseFlflFallback = FuriganaUseFlflCheckBox.IsChecked == true;
+    }
+
+    private void OnFuriganaStatusChanged(object? sender, FuriganaServiceStatusChangedEventArgs e)
+    {
+        Dispatcher.InvokeAsync(() => UpdateFuriganaStatusFromManager());
+    }
+
+    private async void UpdateFuriganaStatusFromManager()
+    {
+        var mgr = FuriganaServiceManager.Instance;
+
+        if (!mgr.IsRunning)
+        {
+            FuriganaStatusText.Text = "Not running";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Colors.Gray);
+            return;
+        }
+
+        try
+        {
+            var status = await mgr.GetStatusAsync();
+            if (status == null)
+            {
+                FuriganaStatusText.Text = "Running (status unknown)";
+                FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 193, 7)); // amber
+                return;
+            }
+
+            string text;
+            if (status.SudachiReady && status.FlflLoaded && status.FlflLatencyMs.HasValue)
+                text = $"Sudachi ready, FLFL ready (latency: {status.FlflLatencyMs.Value:F0}ms)";
+            else if (status.SudachiReady && status.FlflLoading)
+                text = "Sudachi ready, FLFL loading…";
+            else if (status.SudachiReady)
+                text = "Sudachi ready, FLFL not loaded";
+            else
+                text = "Initializing…";
+
+            FuriganaStatusText.Text = text;
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(76, 175, 80)); // green
+        }
+        catch
+        {
+            FuriganaStatusText.Text = "Running (unable to fetch status)";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 193, 7));
+        }
+    }
+
+    private async void FuriganaTestConnection_Click(object sender, RoutedEventArgs e)
+    {
+        CollectFuriganaSettings();
+
+        var url = _workingCopy.Furigana.SidecarUrl;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            FuriganaConnectionStatus.Text = "✗ No URL configured";
+            FuriganaConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+            return;
+        }
+
+        FuriganaConnectionStatus.Text = "Testing…";
+        FuriganaConnectionStatus.Foreground = new SolidColorBrush(Colors.Gray);
+
+        try
+        {
+            using var provider = new HttpFuriganaProvider(url);
+            var available = await provider.IsAvailableAsync();
+
+            if (available)
+            {
+                FuriganaConnectionStatus.Text = "✓ Connected";
+                FuriganaConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+
+                // Also refresh the detailed status display
+                await UpdateFuriganaStatusFromManagerAsync();
+            }
+            else
+            {
+                FuriganaConnectionStatus.Text = "✗ Not reachable";
+                FuriganaConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+            }
+        }
+        catch (Exception ex)
+        {
+            FuriganaConnectionStatus.Text = $"✗ Error: {ex.Message}";
+            FuriganaConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+        }
+    }
+
+    private async Task UpdateFuriganaStatusFromManagerAsync()
+    {
+        var mgr = FuriganaServiceManager.Instance;
+        if (!mgr.IsRunning) return;
+
+        try
+        {
+            var status = await mgr.GetStatusAsync();
+            if (status == null) return;
+
+            string text;
+            if (status.SudachiReady && status.FlflLoaded && status.FlflLatencyMs.HasValue)
+                text = $"Sudachi ready, FLFL ready (latency: {status.FlflLatencyMs.Value:F0}ms)";
+            else if (status.SudachiReady && status.FlflLoading)
+                text = "Sudachi ready, FLFL loading…";
+            else if (status.SudachiReady)
+                text = "Sudachi ready, FLFL not loaded";
+            else
+                text = "Initializing…";
+
+            FuriganaStatusText.Text = text;
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+        }
+        catch { }
+    }
+
+    private void FuriganaInstall_Click(object sender, RoutedEventArgs e)
+    {
+        string serviceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "furigana-service");
+        bool isWindows = OperatingSystem.IsWindows();
+        string scriptName = isWindows ? "install.bat" : "install.sh";
+        string scriptPath = Path.Combine(serviceDir, scriptName);
+
+        if (!File.Exists(scriptPath))
+        {
+            MessageBox.Show(
+                $"Installation script not found:\n{scriptPath}\n\nPlease ensure the furigana-service directory is included in the application.",
+                "Install Sidecar",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = isWindows ? scriptPath : "/bin/bash",
+                Arguments = isWindows ? "" : $"\"{scriptPath}\"",
+                WorkingDirectory = serviceDir,
+                UseShellExecute = true,
+                CreateNoWindow = false
+            };
+            Process.Start(startInfo);
+
+            MessageBox.Show(
+                "Installation started. The sidecar setup process will open.\n\n" +
+                "After installation completes, click \"Start\" to launch the sidecar.\n\n" +
+                $"Check the logs at:\n%LOCALAPPDATA%/OnscreenTranslator/logs/furigana-service.log",
+                "Install Sidecar",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Failed to start installation:\n{ex.Message}",
+                "Install Sidecar",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async void FuriganaStart_Click(object sender, RoutedEventArgs e)
+    {
+        CollectFuriganaSettings();
+
+        FuriganaStatusText.Text = "Starting…";
+        FuriganaStatusText.Foreground = new SolidColorBrush(Colors.Gray);
+
+        try
+        {
+            var mgr = FuriganaServiceManager.Instance;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            await mgr.StartAsync(cts.Token);
+
+            FuriganaStatusText.Text = "Running";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+            await UpdateFuriganaStatusFromManagerAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            FuriganaStatusText.Text = "Error: start timed out";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+        }
+        catch (Exception ex)
+        {
+            FuriganaStatusText.Text = $"Error: {ex.Message}";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+        }
+    }
+
+    private async void FuriganaStop_Click(object sender, RoutedEventArgs e)
+    {
+        FuriganaStatusText.Text = "Stopping…";
+        FuriganaStatusText.Foreground = new SolidColorBrush(Colors.Gray);
+
+        try
+        {
+            var mgr = FuriganaServiceManager.Instance;
+            await mgr.StopAsync();
+
+            FuriganaStatusText.Text = "Not running";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Colors.Gray);
+        }
+        catch (Exception ex)
+        {
+            FuriganaStatusText.Text = $"Error: {ex.Message}";
+            FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+        }
     }
 
     #endregion

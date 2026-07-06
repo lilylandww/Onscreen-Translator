@@ -35,6 +35,23 @@ public class FuriganaServiceStatusChangedEventArgs : EventArgs
 /// </summary>
 public class FuriganaServiceManager : IDisposable
 {
+    /// <summary>
+    /// Shared singleton instance used by both MainWindow and SettingsWindow
+    /// so that start/stop in Settings is reflected everywhere.
+    /// </summary>
+    private static FuriganaServiceManager? _instance;
+    private static readonly object _instanceLock = new();
+    public static FuriganaServiceManager Instance
+    {
+        get
+        {
+            lock (_instanceLock)
+            {
+                return _instance ??= new FuriganaServiceManager();
+            }
+        }
+    }
+
     private Process? _process;
     private readonly object _lock = new();
     private bool _disposed;
@@ -48,6 +65,21 @@ public class FuriganaServiceManager : IDisposable
 
     private HttpClient? _httpClient;
     private int _restartAttempt;
+
+    // --- Degradation monitoring ---
+    private volatile int _consecutiveSlowFlflCount;
+    private volatile bool _isDegraded;
+    private Timer? _degradationPollTimer;
+
+    /// <summary>
+    /// True when FLFL has been auto-degraded and Ollama fallback should be used instead.
+    /// </summary>
+    public bool IsDegraded => _isDegraded;
+
+    /// <summary>
+    /// Fires when degradation state changes (FLFL→Ollama switch).
+    /// </summary>
+    public event EventHandler<bool>? DegradedChanged;
 
     /// <summary>
     /// Fires when the service health status changes.
@@ -86,8 +118,9 @@ public class FuriganaServiceManager : IDisposable
     /// Starts the sidecar process and waits for it to become healthy.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="degradationThresholdMs">FLFL latency threshold (ms) above which auto-degradation triggers.</param>
     /// <exception cref="TimeoutException">If the sidecar does not become healthy within 30 seconds.</exception>
-    public async Task StartAsync(CancellationToken ct = default)
+    public async Task StartAsync(CancellationToken ct = default, int degradationThresholdMs = 2000)
     {
         if (IsRunning) return;
 
@@ -151,6 +184,10 @@ public class FuriganaServiceManager : IDisposable
                     IsHealthy = true,
                     Status = await GetStatusAsync()
                 });
+
+                // Start degradation monitoring after sidecar is ready
+                StartDegradationMonitoring(degradationThresholdMs);
+
                 return;
             }
 
@@ -175,6 +212,7 @@ public class FuriganaServiceManager : IDisposable
     public Task StopAsync()
     {
         _stopping = true;
+        StopDegradationMonitoring();
 
         Process? process;
         lock (_lock)
@@ -323,11 +361,87 @@ public class FuriganaServiceManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Starts a periodic poll that monitors FLFL latency and auto-degrades to Ollama
+    /// when FLFL consistently exceeds the given threshold.
+    /// </summary>
+    /// <param name="thresholdMs">Latency threshold in ms (default 2000).</param>
+    public void StartDegradationMonitoring(int thresholdMs = 2000)
+    {
+        StopDegradationMonitoring(); // dispose any existing timer
+
+        _degradationPollTimer = new Timer(async _ =>
+        {
+            try
+            {
+                var status = await GetStatusAsync();
+                bool shouldDegrade;
+                lock (_lock)
+                {
+                    if (status?.FlflLatencyMs.HasValue == true && status.FlflLatencyMs.Value > thresholdMs)
+                    {
+                        _consecutiveSlowFlflCount++;
+                        Debug.WriteLine(
+                            $"[FuriganaServiceManager] FLFL slow ({status.FlflLatencyMs.Value:F0}ms > {thresholdMs}ms). " +
+                            $"Consecutive slow count: {_consecutiveSlowFlflCount}");
+                    }
+                    else
+                    {
+                        _consecutiveSlowFlflCount = 0;
+                    }
+
+                    shouldDegrade = _consecutiveSlowFlflCount >= 3 && !_isDegraded;
+                    if (shouldDegrade)
+                    {
+                        _isDegraded = true;
+                    }
+                }
+
+                if (shouldDegrade)
+                {
+                    await DegradeToOllamaAsync();
+                    Debug.WriteLine("[FuriganaServiceManager] Auto-degraded to Ollama (FLFL slow).");
+                    // Fire event — subscribers should marshal to UI thread if needed
+                    DegradedChanged?.Invoke(this, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[FuriganaServiceManager] Degradation poll error: {ex.Message}");
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// Stops the degradation monitoring timer.
+    /// </summary>
+    public void StopDegradationMonitoring()
+    {
+        _degradationPollTimer?.Dispose();
+        _degradationPollTimer = null;
+    }
+
+    /// <summary>
+    /// Resets degradation state so FLFL is used again. Called by the user from Settings
+    /// to re-enable FLFL after a previous auto-degradation.
+    /// </summary>
+    public void ResetDegradation()
+    {
+        lock (_lock)
+        {
+            _isDegraded = false;
+            _consecutiveSlowFlflCount = 0;
+        }
+        Debug.WriteLine("[FuriganaServiceManager] Degradation reset — FLFL re-enabled.");
+        DegradedChanged?.Invoke(this, false);
+    }
+
     public void Dispose()
     {
         if (!_disposed)
         {
             _stopping = true;
+            StopDegradationMonitoring();
             _httpClient?.Dispose();
             _httpClient = null;
 
