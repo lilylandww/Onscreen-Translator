@@ -195,17 +195,23 @@ public class RubyTextBlock : FrameworkElement
     #region Private Helpers
 
     /// <summary>
-    /// Adds a ruby group: a vertical StackPanel with reading TextBlock above surface TextBlock,
+    /// Adds a ruby group: a two-row Grid with reading TextBlock above surface TextBlock,
     /// wrapped in an InlineUIContainer for natural line wrapping.
+    /// The first row has a fixed height matching the ruby reading font size to ensure
+    /// consistent vertical alignment across all segments.
     /// </summary>
     private void AddRubyGroup(string surface, string reading)
     {
+        double rubyFontSize = BaseFontSize * 0.5;
+
         var rubyReading = new TextBlock
         {
             Text = reading,
-            FontSize = BaseFontSize * 0.5,
+            FontSize = rubyFontSize,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
+            LineHeight = rubyFontSize * 1.1,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
         };
 
         var rubySurface = new TextBlock
@@ -216,30 +222,52 @@ public class RubyTextBlock : FrameworkElement
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
         };
 
-        var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetRow(rubyReading, 0);
-        Grid.SetRow(rubySurface, 1);
+        var grid = CreateRubyGrid();
         grid.Children.Add(rubyReading);
         grid.Children.Add(rubySurface);
+        Grid.SetRow(rubyReading, 0);
+        Grid.SetRow(rubySurface, 1);
 
-        var container = new InlineUIContainer(grid);
+        var container = new InlineUIContainer(grid) { BaselineAlignment = BaselineAlignment.Bottom };
         _textBlock.Inlines.Add(container);
     }
 
     /// <summary>
-    /// Adds a plain Run for pure-kana or reading-less segments.
+    /// Adds a plain-text segment wrapped in the same two-row Grid structure as ruby groups.
+    /// The first row is empty but has the same fixed height as the ruby reading row,
+    /// ensuring plain-kana segments align vertically with ruby-annotated segments.
     /// </summary>
     private void AddPlainRun(string text)
     {
-        var run = new Run(text)
+        var surface = new TextBlock
         {
+            Text = text,
             FontSize = BaseFontSize,
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
         };
-        _textBlock.Inlines.Add(run);
+
+        var grid = CreateRubyGrid();
+        grid.Children.Add(surface);
+        Grid.SetRow(surface, 1);
+
+        var container = new InlineUIContainer(grid) { BaselineAlignment = BaselineAlignment.Bottom };
+        _textBlock.Inlines.Add(container);
+    }
+
+    /// <summary>
+    /// Creates a two-row Grid with a fixed-height first row for ruby reading space
+    /// and an auto-height second row for the surface text. This shared structure
+    /// ensures all segments (ruby and plain) have uniform vertical dimensions.
+    /// </summary>
+    private Grid CreateRubyGrid()
+    {
+        double rubyRowHeight = BaseFontSize * 0.5 * 1.1; // matches ruby reading LineHeight
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(rubyRowHeight, GridUnitType.Pixel) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        return grid;
     }
 
     /// <summary>
