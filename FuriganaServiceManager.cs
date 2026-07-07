@@ -155,24 +155,14 @@ public class FuriganaServiceManager : IDisposable
         lock (_lock)
         {
             _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            _process.OutputDataReceived += (s, e) =>
-            {
-                if (e.Data != null)
-                    Debug.WriteLine($"[sidecar stdout] {e.Data}");
-            };
-            _process.ErrorDataReceived += (s, e) =>
-            {
-                if (e.Data != null)
-                    Debug.WriteLine($"[sidecar stderr] {e.Data}");
-            };
+            _process.OutputDataReceived += (s, e) => { };
+            _process.ErrorDataReceived += (s, e) => { };
             _process.Exited += OnProcessExited;
 
             _process.Start();
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
         }
-
-        Debug.WriteLine($"[FuriganaServiceManager] Sidecar started (PID={_process.Id}). Polling /health...");
 
         // Poll /health until ready or timeout
         var deadline = DateTime.UtcNow.AddMilliseconds(HealthPollTimeoutMs);
@@ -182,7 +172,6 @@ public class FuriganaServiceManager : IDisposable
 
             if (await IsHealthyAsync())
             {
-                Debug.WriteLine("[FuriganaServiceManager] Sidecar is healthy.");
                 _restartAttempt = 0;
                 StatusChanged?.Invoke(this, new FuriganaServiceStatusChangedEventArgs
                 {
@@ -228,8 +217,6 @@ public class FuriganaServiceManager : IDisposable
 
         if (process == null || process.HasExited)
             return Task.CompletedTask;
-
-        Debug.WriteLine($"[FuriganaServiceManager] Stopping sidecar (PID={process.Id})...");
 
         try
         {
@@ -291,13 +278,11 @@ public class FuriganaServiceManager : IDisposable
     {
         if (_stopping || _restartAttempt >= MaxRestartAttempts)
         {
-            Debug.WriteLine($"[FuriganaServiceManager] Not restarting (stopping={_stopping}, attempt={_restartAttempt}).");
             return;
         }
 
         int delay = RestartBackoffDelaysMs[Math.Min(_restartAttempt, RestartBackoffDelaysMs.Length - 1)];
         _restartAttempt++;
-        Debug.WriteLine($"[FuriganaServiceManager] Restart attempt {_restartAttempt}/{MaxRestartAttempts} in {delay}ms...");
 
         await Task.Delay(delay);
 
@@ -358,7 +343,6 @@ public class FuriganaServiceManager : IDisposable
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             var response = await GetClient().PostAsync("/degrade", content);
             response.EnsureSuccessStatusCode();
-            Debug.WriteLine("[FuriganaServiceManager] Degradation to Ollama requested.");
         }
         catch (Exception ex)
         {
@@ -386,9 +370,6 @@ public class FuriganaServiceManager : IDisposable
                     if (status?.FlflLatencyMs.HasValue == true && status.FlflLatencyMs.Value > thresholdMs)
                     {
                         _consecutiveSlowFlflCount++;
-                        Debug.WriteLine(
-                            $"[FuriganaServiceManager] FLFL slow ({status.FlflLatencyMs.Value:F0}ms > {thresholdMs}ms). " +
-                            $"Consecutive slow count: {_consecutiveSlowFlflCount}");
                     }
                     else
                     {
@@ -405,8 +386,6 @@ public class FuriganaServiceManager : IDisposable
                 if (shouldDegrade)
                 {
                     await DegradeToOllamaAsync();
-                    Debug.WriteLine("[FuriganaServiceManager] Auto-degraded to Ollama (FLFL slow).");
-                    // Fire event — subscribers should marshal to UI thread if needed
                     DegradedChanged?.Invoke(this, true);
                 }
             }
@@ -437,7 +416,6 @@ public class FuriganaServiceManager : IDisposable
             _isDegraded = false;
             _consecutiveSlowFlflCount = 0;
         }
-        Debug.WriteLine("[FuriganaServiceManager] Degradation reset — FLFL re-enabled.");
         DegradedChanged?.Invoke(this, false);
     }
 

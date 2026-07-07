@@ -33,19 +33,19 @@
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
         </Style>
-        <Style x:Key="SettingsTextBox" TargetType="TextBox">
+        <Style x:Key="SettingsTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
             <Setter Property="Height" Value="32"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Padding" Value="8,2"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
-        <Style x:Key="SettingsComboBox" TargetType="ComboBox">
+        <Style x:Key="SettingsComboBox" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
             <Setter Property="Height" Value="32"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Padding" Value="8,2"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
-        <Style x:Key="SettingsPasswordBox" TargetType="PasswordBox">
+        <Style x:Key="SettingsPasswordBox" TargetType="PasswordBox" BasedOn="{StaticResource {x:Type PasswordBox}}">
             <Setter Property="Height" Value="32"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Padding" Value="8,2"/>
