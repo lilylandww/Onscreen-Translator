@@ -36,6 +36,8 @@ public class RubySegment
 /// </remarks>
 public class RubyTextBlock : FrameworkElement
 {
+    private static readonly Brush _overlayBackgroundBrush = CreateOverlayBrush();
+
     private readonly TextBlock _textBlock;
     private readonly List<RubySegment> _segments = new();
 
@@ -44,6 +46,13 @@ public class RubyTextBlock : FrameworkElement
     /// Used by the caller for font-fit calculations.
     /// </summary>
     public const double RubyLineOverheadFactor = 0.55;
+
+    private static Brush CreateOverlayBrush()
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(204, 250, 235, 215)); // AntiqueWhite at 0.8 opacity
+        brush.Freeze();
+        return brush;
+    }
 
     #region Dependency Properties
 
@@ -86,8 +95,6 @@ public class RubyTextBlock : FrameworkElement
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
-            // AntiqueWhite at 0.8 opacity — matches translatedTextBlock
-            Background = new SolidColorBrush(Color.FromArgb(204, 250, 235, 215)),
         };
 
         AddVisualChild(_textBlock);
@@ -113,15 +120,34 @@ public class RubyTextBlock : FrameworkElement
     protected override Size MeasureOverride(Size availableSize)
     {
         _textBlock.FontSize = BaseFontSize;
-        _textBlock.Measure(availableSize);
-        return _textBlock.DesiredSize;
+        _textBlock.Measure(new Size(availableSize.Width, double.PositiveInfinity));
+        return new Size(
+            Math.Max(_textBlock.DesiredSize.Width, availableSize.Width),
+            Math.Max(_textBlock.DesiredSize.Height, availableSize.Height));
     }
 
     /// <inheritdoc/>
     protected override Size ArrangeOverride(Size finalSize)
     {
-        _textBlock.Arrange(new Rect(finalSize));
+        // Center the text vertically WITHOUT mutating Padding (mutating a
+        // measure-affecting property during/after measure caused WPF to re-run
+        // layout and the block to jump up and down). Arranging at a computed
+        // offset is stable across passes.
+        double desiredHeight = _textBlock.DesiredSize.Height;
+        double y = Math.Max(0, (finalSize.Height - desiredHeight) / 2);
+        _textBlock.Arrange(new Rect(0, y, finalSize.Width, Math.Max(desiredHeight, 0)));
         return finalSize;
+    }
+
+    /// <summary>
+    /// Paints the overlay background across the full arranged bounds. Drawn here
+    /// (rather than on the inner <c>TextBlock</c>) so the background covers the
+    /// whole region while the text is centered independently.
+    /// </summary>
+    protected override void OnRender(DrawingContext drawingContext)
+    {
+        drawingContext.DrawRectangle(_overlayBackgroundBrush, null, new Rect(0, 0, ActualWidth, ActualHeight));
+        base.OnRender(drawingContext);
     }
 
     #endregion
@@ -180,7 +206,6 @@ public class RubyTextBlock : FrameworkElement
             FontSize = BaseFontSize * 0.5,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
-            HorizontalAlignment = HorizontalAlignment.Center,
         };
 
         var rubySurface = new TextBlock
@@ -189,19 +214,18 @@ public class RubyTextBlock : FrameworkElement
             FontSize = BaseFontSize,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Colors.DarkSlateGray),
-            HorizontalAlignment = HorizontalAlignment.Center,
         };
 
-        var stack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        stack.Children.Add(rubyReading);
-        stack.Children.Add(rubySurface);
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetRow(rubyReading, 0);
+        Grid.SetRow(rubySurface, 1);
+        grid.Children.Add(rubyReading);
+        grid.Children.Add(rubySurface);
 
-        var container = new InlineUIContainer(stack);
+        var container = new InlineUIContainer(grid);
         _textBlock.Inlines.Add(container);
     }
 

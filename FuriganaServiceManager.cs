@@ -127,7 +127,12 @@ public class FuriganaServiceManager : IDisposable
         // Determine the script to run
         bool isWindows = OperatingSystem.IsWindows();
         string scriptName = isWindows ? "run.bat" : "run.sh";
-        string serviceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "furigana-service");
+        string? serviceDir = FindFuriganaServiceDir();
+        if (serviceDir == null)
+        {
+            Debug.WriteLine("[FuriganaServiceManager] furigana-service directory not found.");
+            return;
+        }
         string scriptPath = Path.Combine(serviceDir, scriptName);
 
         if (!File.Exists(scriptPath))
@@ -434,6 +439,24 @@ public class FuriganaServiceManager : IDisposable
         }
         Debug.WriteLine("[FuriganaServiceManager] Degradation reset — FLFL re-enabled.");
         DegradedChanged?.Invoke(this, false);
+    }
+
+    /// <summary>
+    /// Walks up from <see cref="AppDomain.CurrentDomain.BaseDirectory"/> looking for
+    /// a "furigana-service" directory. This handles both deployed installs (next to the exe)
+    /// and dev builds (several levels under bin/Debug/net8.0-windows/).
+    /// </summary>
+    internal static string? FindFuriganaServiceDir()
+    {
+        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "furigana-service");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "server.py")))
+                return candidate;
+            dir = dir.Parent;
+        }
+        return null;
     }
 
     public void Dispose()

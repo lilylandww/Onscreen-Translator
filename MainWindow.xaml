@@ -20,6 +20,8 @@
     mc:Ignorable="d"
     >
     <Window.Resources>
+        <!-- Shared overlay background brush -->
+        <SolidColorBrush x:Key="OverlayBackground" Color="AntiqueWhite" Opacity="0.8"/>
         <!-- Shared context menu for overlay controls (translatedTextBlock & rubyTextBlock) -->
         <ContextMenu x:Key="OverlayContextMenu">
             <MenuItem Header="Show Furigana" Click="ShowFurigana_Click" />
@@ -107,10 +109,24 @@
                 KeyboardNavigation.IsTabStop="True"
                 PreviewKeyDown="Overlay_PreviewKeyDown"
                 ContextMenu="{StaticResource OverlayContextMenu}"
-                VerticalScrollBarVisibility="Disabled">
-                <TextBox.Background>
-                    <SolidColorBrush Color="AntiqueWhite" Opacity="0.8"/>
-                </TextBox.Background>
+                VerticalScrollBarVisibility="Disabled"
+                Background="{StaticResource OverlayBackground}">
+                <TextBox.Template>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}">
+                            <ScrollViewer
+                                x:Name="PART_ContentHost"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"
+                                HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}" />
+                        </Border>
+                    </ControlTemplate>
+                </TextBox.Template>
             </TextBox>
             <local:RubyTextBlock
                 x:Name="rubyTextBlock"
@@ -176,6 +192,7 @@
                     x:Name="SettingsButton"
                     Width="32"
                     Height="32"
+                    Padding="0"
                     Margin="4,0,0,0"
                     Click="SettingsButton_Click"
                     ToolTip="Settings">

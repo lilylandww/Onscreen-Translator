@@ -72,6 +72,11 @@ namespace WpfAppTest
                 Debug.WriteLine("OCR cancelled — provider was swapped.");
                 return string.Empty;
             }
+            catch (InvalidOperationException ex)
+            {
+                Debug.WriteLine($"OCR model error: {ex.Message}");
+                return $"[OCR Error] {ex.Message}";
+            }
             catch (Exception ex)
             {
                 Debug.WriteLine($"OCR error: {ex.Message}");
@@ -327,6 +332,7 @@ namespace WpfAppTest
             bmp.Save(outputFileName, ImageFormat.Png);
             string text = await GetOCRTextAsync(outputFileName);
             OCRText = text;
+            Debug.WriteLine($"[MainWindow] OCR text before translation:\n{text}");
 
             // Store OCR text and region in overlay state
             _overlayState.OcrText = text;
@@ -346,6 +352,10 @@ namespace WpfAppTest
                 _furiganaCts?.Dispose();
                 _furiganaCts = new CancellationTokenSource();
                 _ = FetchFuriganaAsync(text, _furiganaCts.Token);
+            }
+            else
+            {
+                Debug.WriteLine("[Furigana] Disabled in settings — skipping furigana fetch.");
             }
 
             // Fetch translation
@@ -554,6 +564,7 @@ namespace WpfAppTest
             if (_overlayState.FuriganaSegments.Count == 0)
             {
                 // No furigana data yet — fall back to translation
+                Debug.WriteLine($"[Furigana] RenderFuriganaView: no segments (enabled={_settings.Furigana.Enabled}) — falling back to translation.");
                 _overlayState.CurrentView = OverlayViewMode.Translation;
                 RenderTextView(_overlayState.Translation, region, x, y);
                 return;
@@ -770,8 +781,17 @@ namespace WpfAppTest
             if (_overlayState.Region == null)
             {
                 // No region captured — revert toggle
+                Debug.WriteLine("[Furigana] Toggle ON: no region captured — reverting.");
                 FuriganaToggleButton.IsChecked = false;
                 return;
+            }
+
+            Debug.WriteLine($"[Furigana] Toggle ON: enabled={_settings.Furigana.Enabled}, segments={_overlayState.FuriganaSegments.Count}, currentView={_overlayState.CurrentView}");
+            if (_overlayState.FuriganaSegments.Count == 0)
+            {
+                Debug.WriteLine(_settings.Furigana.Enabled
+                    ? "[Furigana] No segments yet — furigana fetch may still be in flight or failed. Falling back to translation."
+                    : "[Furigana] Furigana is DISABLED in settings — enable it to populate readings. Falling back to translation.");
             }
 
             _overlayState.CurrentView = OverlayViewMode.Furigana;
@@ -1123,16 +1143,45 @@ namespace WpfAppTest
             {
                 mousePos = new System.Windows.Point(0, 0);
             }
-            for (int i = 0; i < displays.Count; i++)
+
+            // Use saved screen index if still valid, otherwise detect from mouse
+            if (_settings.LastScreenIndex >= 0 && _settings.LastScreenIndex < displays.Count)
             {
-                Rect bound = displays[i].ScaledBounds();
-                if (bound.Contains(mousePos))
+                currentScreenIndex = _settings.LastScreenIndex;
+            }
+            else
+            {
+                for (int i = 0; i < displays.Count; i++)
                 {
-                    currentScreenIndex = i;
-                    break;
+                    Rect bound = displays[i].ScaledBounds();
+                    if (bound.Contains(mousePos))
+                    {
+                        currentScreenIndex = i;
+                        break;
+                    }
                 }
             }
             UpdateScreenButton(displays);
+
+            // Move to saved screen if different from current
+            if (_settings.LastScreenIndex >= 0 && _settings.LastScreenIndex < displays.Count)
+            {
+                // Detect which screen the window is currently on
+                int detectedIndex = 0;
+                for (int i = 0; i < displays.Count; i++)
+                {
+                    Rect bound = displays[i].ScaledBounds();
+                    if (bound.Contains(mousePos))
+                    {
+                        detectedIndex = i;
+                        break;
+                    }
+                }
+                if (currentScreenIndex != detectedIndex)
+                {
+                    MoveToScreen(displays[currentScreenIndex]);
+                }
+            }
 
             InitializeSystemTrayIcon();
 
@@ -1510,13 +1559,21 @@ namespace WpfAppTest
                 currentScreenIndex = 0;
             }
             currentScreenIndex = (currentScreenIndex + 1) % displays.Count;
+            _settings.LastScreenIndex = currentScreenIndex;
+            _settings.Save();
             MoveToScreen(displays[currentScreenIndex]);
             UpdateScreenButton(displays);
         }
 
-        private void MoveToScreen(DisplayInfo screen)
+        private async void MoveToScreen(DisplayInfo screen)
         {
             Rect bounds = screen.ScaledBounds();
+
+            // Drop the previous monitor's frozen screenshot immediately so it
+            // can't bleed through during the (asynchronous) window relocation.
+            BackgroundBrush.Opacity = 0;
+            BG.Source = null;
+
             WindowState = WindowState.Normal;
             Left = bounds.X;
             Top = bounds.Y;
@@ -1524,7 +1581,31 @@ namespace WpfAppTest
             Height = bounds.Height;
             WindowState = WindowState.Maximized;
             FullWindow.Rect = new Rect(0, 0, bounds.Width, bounds.Height);
-            FreezeScreen();
+
+            // Setting WindowState/Left/Top/etc. only *queues* a Win32 move that
+            // WPF/Win32 commit asynchronously. The old fixed 150ms wait could
+            // fire before the HWND had actually moved, so GetAbsolutePosition()
+            // (MonitorFromWindow) and ActualWidth/Height still reported the
+            // *previous* monitor and we snapshotted its content. Wait until the
+            // window really reports it is on the target monitor before capturing.
+            await WaitForWindowOnScreenAsync(bounds);
+            SetImageToBackground();
+        }
+
+        private async Task WaitForWindowOnScreenAsync(Rect targetBounds)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                await Task.Delay(50);
+
+                System.Windows.Point pos = this.GetAbsolutePosition();
+                if (Math.Abs(pos.X - targetBounds.X) <= 1
+                    && Math.Abs(pos.Y - targetBounds.Y) <= 1)
+                {
+                    return;
+                }
+            }
         }
 
         private void UpdateScreenButton(IReadOnlyList<DisplayInfo> displays)
