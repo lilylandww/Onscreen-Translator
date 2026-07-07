@@ -691,6 +691,16 @@ async def reset_degradation() -> DegradeResponse:
     return DegradeResponse(ok=True, degraded=False)
 
 
+@app.post("/shutdown")
+async def shutdown_route():
+    logger.info("Shutdown requested via API")
+    def self_destruct():
+        time.sleep(0.2)
+        os._exit(0)
+    threading.Thread(target=self_destruct, daemon=True).start()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------

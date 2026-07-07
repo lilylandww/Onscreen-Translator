@@ -262,13 +262,22 @@ public class FuriganaServiceManager : IDisposable
         throw new TimeoutException("Furigana sidecar failed to become healthy within 30 seconds.");
     }
 
-    /// <summary>
-    /// Gracefully stops the sidecar process.
-    /// </summary>
-    public Task StopAsync()
+    public async Task StopAsync()
     {
         _stopping = true;
         StopDegradationMonitoring();
+
+        // 1. Send HTTP shutdown command to ensure uvicorn/python process terminates
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var client = GetClient();
+            await client.PostAsync("/shutdown", null, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] API shutdown request failed: {ex.Message}");
+        }
 
         Process? process;
         lock (_lock)
@@ -279,7 +288,7 @@ public class FuriganaServiceManager : IDisposable
         }
 
         if (process == null || process.HasExited)
-            return Task.CompletedTask;
+            return;
 
         try
         {
