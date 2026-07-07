@@ -748,7 +748,17 @@ public partial class SettingsWindow : Window
 
     private void FuriganaInstall_Click(object sender, RoutedEventArgs e)
     {
-        string serviceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "furigana-service");
+        string? serviceDir = FuriganaServiceManager.FindFuriganaServiceDir();
+        if (serviceDir == null)
+        {
+            MessageBox.Show(
+                "Furigana service directory not found.\n\nPlease ensure the furigana-service directory exists.",
+                "Install Sidecar",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         bool isWindows = OperatingSystem.IsWindows();
         string scriptName = isWindows ? "install.bat" : "install.sh";
         string scriptPath = Path.Combine(serviceDir, scriptName);

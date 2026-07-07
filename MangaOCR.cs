@@ -47,6 +47,24 @@ public class MangaOCR : IDisposable
         public int MaxRetries { get; set; } = 3;
         public int RetryDelayMs { get; set; } = 1000;
         public string Prompt { get; set; } = "Extract all text from this image. Return only the text, no explanations or commentary.";
+        /// <summary>
+        /// Generation options sent with every OCR request. These cap the output
+        /// length and break the degenerate fence/paragraph repetition that some
+        /// vision models (notably glm-ocr) fall into, which otherwise wastes
+        /// 15+ seconds per image on garbage tokens.
+        /// </summary>
+        public OllamaGenerationOptions Generation { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Ollama generation options that cap output and stop degenerate repetition.
+    /// </summary>
+    public class OllamaGenerationOptions
+    {
+        public int NumPredict { get; set; } = 256;
+        public double Temperature { get; set; } = 0.0;
+        public double RepeatPenalty { get; set; } = 1.2;
+        public List<string> Stop { get; set; } = new() { "```", "``" };
     }
 
     /// <summary>
@@ -65,6 +83,28 @@ public class MangaOCR : IDisposable
 
         [JsonPropertyName("stream")]
         public bool Stream { get; set; } = false;
+
+        [JsonPropertyName("options")]
+        public OllamaOptionsPayload? Options { get; set; }
+    }
+
+    /// <summary>
+    /// Ollama /api/generate options block. Property names use the snake_case
+    /// form expected by Ollama's API.
+    /// </summary>
+    private class OllamaOptionsPayload
+    {
+        [JsonPropertyName("num_predict")]
+        public int NumPredict { get; set; }
+
+        [JsonPropertyName("temperature")]
+        public double Temperature { get; set; }
+
+        [JsonPropertyName("repeat_penalty")]
+        public double RepeatPenalty { get; set; }
+
+        [JsonPropertyName("stop")]
+        public List<string> Stop { get; set; } = new();
     }
 
     /// <summary>
@@ -306,12 +346,25 @@ public class MangaOCR : IDisposable
     /// <returns>Extracted text</returns>
     private async Task<string> ProcessImageWithOllamaAsync(string base64Image, CancellationToken cancellationToken)
     {
+        string activePrompt = Config.Prompt;
+        if (!string.IsNullOrEmpty(Config.Model) && Config.Model.Contains("glm-ocr", StringComparison.OrdinalIgnoreCase))
+        {
+            activePrompt = "Text Recognition:";
+        }
+
         var payload = new OllamaGenerateRequest
         {
             Model = Config.Model,
-            Prompt = Config.Prompt,
+            Prompt = activePrompt,
             Images = new List<string> { base64Image },
-            Stream = false
+            Stream = false,
+            Options = new OllamaOptionsPayload
+            {
+                NumPredict = Config.Generation.NumPredict,
+                Temperature = Config.Generation.Temperature,
+                RepeatPenalty = Config.Generation.RepeatPenalty,
+                Stop = Config.Generation.Stop
+            }
         };
 
         var jsonPayload = JsonSerializer.Serialize(payload);
@@ -340,9 +393,10 @@ public class MangaOCR : IDisposable
                 }
 
                 var extractedText = result.Response?.Trim() ?? string.Empty;
-                Debug.WriteLine($"OCR successful. Extracted text length: {extractedText.Length}");
+                var cleanedText = CleanOcrOutput(extractedText);
+                Debug.WriteLine($"OCR successful. Extracted text length: {cleanedText.Length}");
 
-                return extractedText;
+                return cleanedText;
             }
             catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -356,6 +410,125 @@ public class MangaOCR : IDisposable
         }
 
         throw new InvalidOperationException($"OCR failed after {Config.MaxRetries} attempts");
+    }
+
+    /// <summary>
+    /// Post-processing harness that cleans up LLM output to ensure it contains
+    /// only the extracted text. Handles common LLM tendency to add commentary or markdown fences.
+    /// </summary>
+    private static string CleanOcrOutput(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        var lines = text.Split('\n');
+        var cleanLines = new List<string>();
+        bool started = false;
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+
+            // Skip common preamble patterns
+            if (!started && (
+                trimmed.StartsWith("Here", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("The text", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("I can see", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("The image", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("From the image", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("In the image", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("Note:", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("Sure,", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("Certainly,", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("```", StringComparison.Ordinal)))
+            {
+                if (trimmed.StartsWith("```", StringComparison.Ordinal))
+                {
+                    continue; // Skip code fence markers
+                }
+                var sentenceEnd = trimmed.IndexOfAny(['.', ':', '。']);
+                if (sentenceEnd > 0 && sentenceEnd < trimmed.Length - 1)
+                {
+                    var afterPreamble = trimmed[(sentenceEnd + 1)..].Trim();
+                    if (!string.IsNullOrEmpty(afterPreamble))
+                    {
+                        cleanLines.Add(afterPreamble);
+                        started = true;
+                    }
+                    continue;
+                }
+                continue;
+            }
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+                continue;
+
+            started = true;
+            cleanLines.Add(line);
+        }
+
+        while (cleanLines.Count > 0)
+        {
+            var lastLine = cleanLines[^1].Trim();
+            if (lastLine.StartsWith("Note:", StringComparison.OrdinalIgnoreCase) ||
+                lastLine.StartsWith("Hope this", StringComparison.OrdinalIgnoreCase) ||
+                lastLine.StartsWith("Let me know", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrEmpty(lastLine))
+            {
+                cleanLines.RemoveAt(cleanLines.Count - 1);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return DeduplicateOcrOutput(string.Join("\n", cleanLines)).Trim();
+    }
+
+    /// <summary>
+    /// Collapses repeated OCR output. Some vision models (notably glm-ocr via
+    /// Ollama's /api/generate endpoint) emit the recognized text more than once,
+    /// usually as two identical paragraphs separated by a blank line. This keeps
+    /// a single copy. Only fires when the output is clearly doubled — genuinely
+    /// distinct paragraphs are preserved.
+    /// </summary>
+    private static string DeduplicateOcrOutput(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        var paragraphs = normalized.Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
+                                   .Select(p => p.Trim())
+                                   .Where(p => p.Length > 0)
+                                   .ToList();
+
+        if (paragraphs.Count < 2) return text;
+
+        List<string> deduped = paragraphs;
+
+        // All paragraphs identical -> keep a single copy
+        if (paragraphs.All(p => string.Equals(p, paragraphs[0], StringComparison.Ordinal)))
+        {
+            deduped = new List<string> { paragraphs[0] };
+        }
+        // Even count where the second half repeats the first -> keep first half
+        else if (paragraphs.Count % 2 == 0)
+        {
+            int half = paragraphs.Count / 2;
+            bool halvesMatch = true;
+            for (int i = 0; i < half; i++)
+            {
+                if (!string.Equals(paragraphs[i], paragraphs[i + half], StringComparison.Ordinal))
+                {
+                    halvesMatch = false;
+                    break;
+                }
+            }
+            if (halvesMatch)
+                deduped = paragraphs.Take(half).ToList();
+        }
+
+        return deduped.Count == paragraphs.Count ? text : string.Join("\n\n", deduped);
     }
 
     /// <summary>

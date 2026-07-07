@@ -137,6 +137,9 @@ public class AppSettings
     // Furigana sidecar configuration
     public FuriganaSettings Furigana { get; set; } = new();
 
+    // Last picked display index (for screen switch persistence)
+    public int LastScreenIndex { get; set; } = -1;
+
     // Convenience accessors
     public ProviderConfig GetProviderConfig(string providerName)
     {
