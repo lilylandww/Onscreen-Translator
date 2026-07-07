@@ -66,6 +66,14 @@ public class FuriganaServiceManager : IDisposable
     private HttpClient? _httpClient;
     private int _restartAttempt;
 
+    // --- Status change debounce ---
+    // Prevents rapid "ready → not running → ready" flicker when the process
+    // briefly exits during auto-restart. We wait 600 ms before actually firing
+    // the event so that a restart that completes quickly collapses into one
+    // transition instead of two.
+    private CancellationTokenSource? _statusDebounce;
+    private readonly object _statusDebounceLock = new();
+
     // --- Degradation monitoring ---
     private volatile int _consecutiveSlowFlflCount;
     private volatile bool _isDegraded;
@@ -83,16 +91,45 @@ public class FuriganaServiceManager : IDisposable
 
     /// <summary>
     /// Fires when the service health status changes.
+    /// Debounced by 600 ms to suppress flicker during auto-restart.
     /// </summary>
     public event EventHandler<FuriganaServiceStatusChangedEventArgs>? StatusChanged;
+
+    /// <summary>
+    /// Fires StatusChanged after a 600 ms debounce so that rapid
+    /// crash → restart cycles don't cause the UI to flicker.
+    /// </summary>
+    private void RaiseStatusChangedDebounced(FuriganaServiceStatusChangedEventArgs args)
+    {
+        CancellationTokenSource newCts;
+        lock (_statusDebounceLock)
+        {
+            _statusDebounce?.Cancel();
+            _statusDebounce?.Dispose();
+            newCts = _statusDebounce = new CancellationTokenSource();
+        }
+
+        var ct = newCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(600, ct);
+                StatusChanged?.Invoke(this, args);
+            }
+            catch (OperationCanceledException) { /* superseded by newer event */ }
+        }, ct);
+    }
 
     /// <summary>
     /// The URL the sidecar is bound to.
     /// </summary>
     public string SidecarUrl { get; private set; } = "http://127.0.0.1:8765";
 
+    private bool _isServiceActive;
+
     /// <summary>
-    /// Whether the sidecar process is currently running.
+    /// Whether the sidecar process is currently running or reachable in the background.
     /// </summary>
     public bool IsRunning
     {
@@ -100,7 +137,7 @@ public class FuriganaServiceManager : IDisposable
         {
             lock (_lock)
             {
-                return _process != null && !_process.HasExited;
+                return _isServiceActive || (_process != null && !_process.HasExited);
             }
         }
     }
@@ -122,6 +159,27 @@ public class FuriganaServiceManager : IDisposable
     /// <exception cref="TimeoutException">If the sidecar does not become healthy within 30 seconds.</exception>
     public async Task StartAsync(CancellationToken ct = default, int degradationThresholdMs = 2000)
     {
+        // Reset stopping flag so that OnProcessExited can schedule auto-restarts
+        // after a manual stop+start cycle.
+        _stopping = false;
+
+        // If service is already active and healthy in the background, don't restart it.
+        if (await IsHealthyAsync())
+        {
+            lock (_lock)
+            {
+                _isServiceActive = true;
+            }
+            _restartAttempt = 0;
+            RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
+            {
+                IsHealthy = true,
+                Status = await GetStatusAsync()
+            });
+            StartDegradationMonitoring(degradationThresholdMs);
+            return;
+        }
+
         if (IsRunning) return;
 
         // Determine the script to run
@@ -172,8 +230,12 @@ public class FuriganaServiceManager : IDisposable
 
             if (await IsHealthyAsync())
             {
+                lock (_lock)
+                {
+                    _isServiceActive = true;
+                }
                 _restartAttempt = 0;
-                StatusChanged?.Invoke(this, new FuriganaServiceStatusChangedEventArgs
+                RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
                 {
                     IsHealthy = true,
                     Status = await GetStatusAsync()
@@ -211,6 +273,7 @@ public class FuriganaServiceManager : IDisposable
         Process? process;
         lock (_lock)
         {
+            _isServiceActive = false;
             process = _process;
             _process = null;
         }
@@ -240,6 +303,7 @@ public class FuriganaServiceManager : IDisposable
             process.Dispose();
         }
 
+        // Fire immediately (no debounce) for an explicit user-initiated stop.
         StatusChanged?.Invoke(this, new FuriganaServiceStatusChangedEventArgs
         {
             IsHealthy = false,
@@ -249,7 +313,7 @@ public class FuriganaServiceManager : IDisposable
         return Task.CompletedTask;
     }
 
-    private void OnProcessExited(object? sender, EventArgs e)
+    private async void OnProcessExited(object? sender, EventArgs e)
     {
         if (_stopping) return;
 
@@ -262,9 +326,32 @@ public class FuriganaServiceManager : IDisposable
         int exitCode = -1;
         try { exitCode = process?.ExitCode ?? -1; } catch { }
 
+        // If the process exited with code 0 (which run.bat does when the service is already running)
+        // or if uvicorn is responding healthily, we don't treat it as a crash.
+        if (exitCode == 0 || await IsHealthyAsync())
+        {
+            lock (_lock)
+            {
+                if (_process == process)
+                {
+                    _process = null;
+                }
+                _isServiceActive = true;
+            }
+            Debug.WriteLine($"[FuriganaServiceManager] Sidecar process exited cleanly or uvicorn is healthy in background (exit code: {exitCode}).");
+            return;
+        }
+
+        lock (_lock)
+        {
+            _isServiceActive = false;
+        }
+
         Debug.WriteLine($"[FuriganaServiceManager] Sidecar exited unexpectedly (exit code: {exitCode}).");
 
-        StatusChanged?.Invoke(this, new FuriganaServiceStatusChangedEventArgs
+        // Use debounced firing so a quick crash-restart cycle doesn't flash
+        // "Not running" before the process is back up.
+        RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
         {
             IsHealthy = false,
             Status = null
@@ -443,6 +530,12 @@ public class FuriganaServiceManager : IDisposable
         {
             _stopping = true;
             StopDegradationMonitoring();
+            lock (_statusDebounceLock)
+            {
+                _statusDebounce?.Cancel();
+                _statusDebounce?.Dispose();
+                _statusDebounce = null;
+            }
             _httpClient?.Dispose();
             _httpClient = null;
 
