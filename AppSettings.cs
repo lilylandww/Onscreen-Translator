@@ -140,6 +140,9 @@ public class AppSettings
     // Last picked display index (for screen switch persistence)
     public int LastScreenIndex { get; set; } = -1;
 
+    // Live (non-frozen) capture mode
+    public bool LiveMode { get; set; } = false;
+
     // Convenience accessors
     public ProviderConfig GetProviderConfig(string providerName)
     {

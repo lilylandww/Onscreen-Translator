@@ -29,6 +29,7 @@ namespace WpfAppTest
         private TextBox? editTextBox;
         private bool isEditing = false;
         private bool captureModeEnabled = true;
+        private bool _liveMode;
 
         private int currentScreenIndex = 0;
         private SystemTrayIcon? _systemTrayIcon;
@@ -89,6 +90,7 @@ namespace WpfAppTest
             InitializeComponent();
 
             _settings = AppSettings.Load();
+            _liveMode = _settings.LiveMode;
 
             // Load API keys from environment for backward compatibility
             _ = DotNetEnv.Env.Load();
@@ -174,6 +176,8 @@ namespace WpfAppTest
         {
             // Reload settings from disk
             _settings = AppSettings.Load();
+            _liveMode = _settings.LiveMode;
+            LiveModeToggleButton.IsChecked = _liveMode;
 
             // Cancel any in-flight OCR before swapping providers
             _ocrCts?.Cancel();
@@ -320,9 +324,37 @@ namespace WpfAppTest
                 (int)(selectBorder.Width * m.M11),
                 (int)(selectBorder.Height * m.M22));
 
-            Bitmap bmp = ImageMethods.GetRegionOfScreenAsBitmap(scaledRegion);
-            string timeStamp = ApplicationUtilities.GetTimestamp(DateTime.Now);
             bool isSmallArea = scaledRegion.Width < 5 && scaledRegion.Height < 5;
+
+            Bitmap bmp;
+            if (_liveMode && !isSmallArea)
+            {
+                // Hide chrome so it doesn't appear in the live capture
+                selectBorder.Visibility = Visibility.Hidden;
+                TopButtonStack.Visibility = Visibility.Collapsed;
+                translatedTextBlock.Visibility = Visibility.Collapsed;
+                rubyTextBlock.Visibility = Visibility.Collapsed;
+                double savedOpacity = BackgroundBrush.Opacity;
+                BackgroundBrush.Opacity = 0;
+
+                // A single Render invoke only flushes WPF's visual tree; the DWM
+                // compositor still needs time to present the new frame to the screen
+                // before CopyFromScreen reads it. Mirror FreezeScreen()'s hide-then-wait.
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                await Task.Delay(150);
+
+                bmp = ImageMethods.GetRegionOfScreenAsBitmap(scaledRegion);
+
+                // Restore chrome
+                selectBorder.Visibility = Visibility.Visible;
+                BackgroundBrush.Opacity = savedOpacity;
+            }
+            else
+            {
+                bmp = ImageMethods.GetRegionOfScreenAsBitmap(scaledRegion);
+            }
+            string timeStamp = ApplicationUtilities.GetTimestamp(DateTime.Now);
+
             if (isSmallArea)
             {
                 BackgroundBrush.Opacity = 0;
@@ -1022,6 +1054,12 @@ namespace WpfAppTest
 
         private async void FreezeScreen()
         {
+            if (_liveMode)
+            {
+                BG.Source = null;
+                BackgroundBrush.Opacity = 0.15;
+                return;
+            }
             BackgroundBrush.Opacity = 0;
             await Task.Delay(150);
             SetImageToBackground();
@@ -1050,7 +1088,15 @@ namespace WpfAppTest
 
         private void Window_Activated(object sender, EventArgs e)
         {
-            FreezeScreen();
+            if (_liveMode)
+            {
+                BG.Source = null;
+                BackgroundBrush.Opacity = 0.15;
+            }
+            else
+            {
+                FreezeScreen();
+            }
             if (!isEditing)
             {
                 FinishEditButton.Visibility = Visibility.Collapsed;
@@ -1115,13 +1161,16 @@ namespace WpfAppTest
             WindowState = WindowState.Maximized;
             FullWindow.Rect = new Rect(0, 0, Width, Height);
             KeyDown += HandleKeyDown;
-            SetImageToBackground();
+            if (!_liveMode) SetImageToBackground();
+            else { BG.Source = null; BackgroundBrush.Opacity = 0.15; }
             SearchToggleButton.ToolTip = "Show Dictionary Search";
             // Phase 3: Re-enable furigana toggle for overlay view switching
             FuriganaToggleButton.IsChecked = false;
             FuriganaToggleButton.ToolTip = "Toggle Furigana View";
             FuriganaToggleButton.Checked += FuriganaToggleButton_Checked;
             FuriganaToggleButton.Unchecked += FuriganaToggleButton_Unchecked;
+
+            LiveModeToggleButton.IsChecked = _liveMode;
 
             InitializeTranslationProviderComboBox();
             InitializeModelComboBoxes();
@@ -1549,6 +1598,25 @@ namespace WpfAppTest
             BackgroundBrush.Opacity = 0.15;
         }
 
+        private void LiveModeToggleButton_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            _liveMode = true;
+            _settings.LiveMode = true;
+            SaveSettings();
+            Unfreeze();
+            BackgroundBrush.Opacity = 0.15; // lighter dim for live mode
+        }
+
+        private void LiveModeToggleButton_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            _liveMode = false;
+            _settings.LiveMode = false;
+            SaveSettings();
+            FreezeScreen(); // return to frozen mode
+        }
+
         private void ScreenSwitchButton_Click(object sender, RoutedEventArgs e)
         {
             var displays = DisplayInfo.AllDisplayInfos.ToList();
@@ -1589,7 +1657,8 @@ namespace WpfAppTest
             // *previous* monitor and we snapshotted its content. Wait until the
             // window really reports it is on the target monitor before capturing.
             await WaitForWindowOnScreenAsync(bounds);
-            SetImageToBackground();
+            if (!_liveMode) SetImageToBackground();
+            else { BG.Source = null; BackgroundBrush.Opacity = 0.15; }
         }
 
         private async Task WaitForWindowOnScreenAsync(Rect targetBounds)

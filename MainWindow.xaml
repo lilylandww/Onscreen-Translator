@@ -263,6 +263,13 @@
                     ToolTip="Capture Mode Enabled (Click to disable)">
                     <wpfui:SymbolIcon Symbol="Cursor24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
                 </ToggleButton>
+                <ToggleButton
+                    x:Name="LiveModeToggleButton"
+                    Checked="LiveModeToggleButton_Checked"
+                    Unchecked="LiveModeToggleButton_Unchecked"
+                    ToolTip="Live Mode (no screen freeze)">
+                    <wpfui:SymbolIcon Symbol="Eye24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+                </ToggleButton>
                 <Button
                     x:Name="ScreenSwitchButton"
                     Click="ScreenSwitchButton_Click"
