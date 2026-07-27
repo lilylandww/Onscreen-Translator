@@ -9,4 +9,4 @@ __pycache__
 *.log
 plans
 docs/agent-sessions/
-.opencode
+.opencode.pi-subagents/
