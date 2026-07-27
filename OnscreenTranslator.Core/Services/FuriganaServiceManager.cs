@@ -1,0 +1,578 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace OnscreenTranslator.Core;
+
+/// <summary>
+/// Status of the furigana sidecar service, returned by <c>GET /status</c>.
+/// </summary>
+public record FuriganaServiceStatus(
+    [property: JsonPropertyName("sudachi_ready")] bool SudachiReady,
+    [property: JsonPropertyName("flfl_loaded")] bool FlflLoaded,
+    [property: JsonPropertyName("flfl_loading")] bool FlflLoading,
+    [property: JsonPropertyName("flfl_latency_ms")] double? FlflLatencyMs
+);
+
+/// <summary>
+/// Event args for <see cref="FuriganaServiceManager.StatusChanged"/>.
+/// </summary>
+public class FuriganaServiceStatusChangedEventArgs : EventArgs
+{
+    public bool IsHealthy { get; init; }
+    public FuriganaServiceStatus? Status { get; init; }
+}
+
+/// <summary>
+/// Manages the lifecycle of the Python furigana sidecar process.
+/// Handles start/stop, health checks, auto-restart on crash, and degradation.
+/// </summary>
+public class FuriganaServiceManager : IDisposable
+{
+    /// <summary>
+    /// Shared singleton instance used by both MainWindow and SettingsWindow
+    /// so that start/stop in Settings is reflected everywhere.
+    /// </summary>
+    private static FuriganaServiceManager? _instance;
+    private static readonly object _instanceLock = new();
+    public static FuriganaServiceManager Instance
+    {
+        get
+        {
+            lock (_instanceLock)
+            {
+                return _instance ??= new FuriganaServiceManager();
+            }
+        }
+    }
+
+    private Process? _process;
+    private readonly object _lock = new();
+    private bool _disposed;
+    private bool _stopping;
+
+    private const int HealthPollTimeoutMs = 30_000;
+    private const int HealthPollIntervalMs = 500;
+    private const int MaxRestartAttempts = 3;
+    private static readonly int[] RestartBackoffDelaysMs = [1000, 4000, 15000];
+    private const int GracefulShutdownTimeoutMs = 5000;
+
+    private HttpClient? _httpClient;
+    private int _restartAttempt;
+
+    // --- Status change debounce ---
+    // Prevents rapid "ready → not running → ready" flicker when the process
+    // briefly exits during auto-restart. We wait 600 ms before actually firing
+    // the event so that a restart that completes quickly collapses into one
+    // transition instead of two.
+    private CancellationTokenSource? _statusDebounce;
+    private readonly object _statusDebounceLock = new();
+
+    // --- Degradation monitoring ---
+    private volatile int _consecutiveSlowFlflCount;
+    private volatile bool _isDegraded;
+    private Timer? _degradationPollTimer;
+
+    /// <summary>
+    /// True when FLFL has been auto-degraded and Ollama fallback should be used instead.
+    /// </summary>
+    public bool IsDegraded => _isDegraded;
+
+    /// <summary>
+    /// Fires when degradation state changes (FLFL→Ollama switch).
+    /// </summary>
+    public event EventHandler<bool>? DegradedChanged;
+
+    /// <summary>
+    /// Fires when the service health status changes.
+    /// Debounced by 600 ms to suppress flicker during auto-restart.
+    /// </summary>
+    public event EventHandler<FuriganaServiceStatusChangedEventArgs>? StatusChanged;
+
+    /// <summary>
+    /// Fires StatusChanged after a 600 ms debounce so that rapid
+    /// crash → restart cycles don't cause the UI to flicker.
+    /// </summary>
+    private void RaiseStatusChangedDebounced(FuriganaServiceStatusChangedEventArgs args)
+    {
+        CancellationTokenSource newCts;
+        lock (_statusDebounceLock)
+        {
+            _statusDebounce?.Cancel();
+            _statusDebounce?.Dispose();
+            newCts = _statusDebounce = new CancellationTokenSource();
+        }
+
+        var ct = newCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(600, ct);
+                StatusChanged?.Invoke(this, args);
+            }
+            catch (OperationCanceledException) { /* superseded by newer event */ }
+        }, ct);
+    }
+
+    /// <summary>
+    /// The URL the sidecar is bound to.
+    /// </summary>
+    public string SidecarUrl { get; private set; } = "http://127.0.0.1:8765";
+
+    private bool _isServiceActive;
+
+    /// <summary>
+    /// Whether the sidecar process is currently running or reachable in the background.
+    /// </summary>
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _isServiceActive || (_process != null && !_process.HasExited);
+            }
+        }
+    }
+
+    private HttpClient GetClient()
+    {
+        return _httpClient ??= new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+            BaseAddress = new Uri(SidecarUrl)
+        };
+    }
+
+    /// <summary>
+    /// Starts the sidecar process and waits for it to become healthy.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="degradationThresholdMs">FLFL latency threshold (ms) above which auto-degradation triggers.</param>
+    /// <exception cref="TimeoutException">If the sidecar does not become healthy within 30 seconds.</exception>
+    public async Task StartAsync(CancellationToken ct = default, int degradationThresholdMs = 2000)
+    {
+        // Reset stopping flag so that OnProcessExited can schedule auto-restarts
+        // after a manual stop+start cycle.
+        _stopping = false;
+
+        // If service is already active and healthy in the background, don't restart it.
+        if (await IsHealthyAsync())
+        {
+            lock (_lock)
+            {
+                _isServiceActive = true;
+            }
+            _restartAttempt = 0;
+            RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
+            {
+                IsHealthy = true,
+                Status = await GetStatusAsync()
+            });
+            StartDegradationMonitoring(degradationThresholdMs);
+            return;
+        }
+
+        if (IsRunning) return;
+
+        // Determine the script to run
+        bool isWindows = OperatingSystem.IsWindows();
+        string scriptName = isWindows ? "run.bat" : "run.sh";
+        string? serviceDir = FindFuriganaServiceDir();
+        if (serviceDir == null)
+        {
+            Debug.WriteLine("[FuriganaServiceManager] furigana-service directory not found.");
+            return;
+        }
+        string scriptPath = Path.Combine(serviceDir, scriptName);
+
+        if (!File.Exists(scriptPath))
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] Sidecar script not found: {scriptPath}");
+            return;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = isWindows ? scriptPath : "/bin/bash",
+            Arguments = isWindows ? "" : $"\"{scriptPath}\"",
+            WorkingDirectory = serviceDir,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        lock (_lock)
+        {
+            _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            _process.OutputDataReceived += (s, e) => { };
+            _process.ErrorDataReceived += (s, e) => { };
+            _process.Exited += OnProcessExited;
+
+            _process.Start();
+            _process.BeginOutputReadLine();
+            _process.BeginErrorReadLine();
+        }
+
+        // Poll /health until ready or timeout
+        var deadline = DateTime.UtcNow.AddMilliseconds(HealthPollTimeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (await IsHealthyAsync())
+            {
+                lock (_lock)
+                {
+                    _isServiceActive = true;
+                }
+                _restartAttempt = 0;
+                RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
+                {
+                    IsHealthy = true,
+                    Status = await GetStatusAsync()
+                });
+
+                // Start degradation monitoring after sidecar is ready
+                StartDegradationMonitoring(degradationThresholdMs);
+
+                return;
+            }
+
+            if (IsRunning)
+            {
+                await Task.Delay(HealthPollIntervalMs, ct);
+            }
+            else
+            {
+                // Process exited before becoming healthy
+                break;
+            }
+        }
+
+        Debug.WriteLine("[FuriganaServiceManager] Sidecar failed to become healthy within timeout.");
+        throw new TimeoutException("Furigana sidecar failed to become healthy within 30 seconds.");
+    }
+
+    public async Task StopAsync()
+    {
+        _stopping = true;
+        StopDegradationMonitoring();
+
+        // 1. Send HTTP shutdown command to ensure uvicorn/python process terminates
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var client = GetClient();
+            await client.PostAsync("/shutdown", null, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] API shutdown request failed: {ex.Message}");
+        }
+
+        Process? process;
+        lock (_lock)
+        {
+            _isServiceActive = false;
+            process = _process;
+            _process = null;
+        }
+
+        if (process == null || process.HasExited)
+            return;
+
+        try
+        {
+            process.Exited -= OnProcessExited;
+            process.CloseMainWindow();
+
+            // Wait for graceful exit
+            if (!process.WaitForExit(GracefulShutdownTimeoutMs))
+            {
+                Debug.WriteLine("[FuriganaServiceManager] Graceful shutdown timed out, killing process.");
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* process already exited */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] Error stopping sidecar: {ex.Message}");
+        }
+        finally
+        {
+            process.Dispose();
+        }
+
+        // Fire immediately (no debounce) for an explicit user-initiated stop.
+        StatusChanged?.Invoke(this, new FuriganaServiceStatusChangedEventArgs
+        {
+            IsHealthy = false,
+            Status = null
+        });
+
+        return;
+    }
+
+    private async void OnProcessExited(object? sender, EventArgs e)
+    {
+        if (_stopping) return;
+
+        Process? process;
+        lock (_lock)
+        {
+            process = _process;
+        }
+
+        int exitCode = -1;
+        try { exitCode = process?.ExitCode ?? -1; } catch { }
+
+        // If the process exited with code 0 (which run.bat does when the service is already running)
+        // or if uvicorn is responding healthily, we don't treat it as a crash.
+        if (exitCode == 0 || await IsHealthyAsync())
+        {
+            lock (_lock)
+            {
+                if (_process == process)
+                {
+                    _process = null;
+                }
+                _isServiceActive = true;
+            }
+            Debug.WriteLine($"[FuriganaServiceManager] Sidecar process exited cleanly or uvicorn is healthy in background (exit code: {exitCode}).");
+            return;
+        }
+
+        lock (_lock)
+        {
+            _isServiceActive = false;
+        }
+
+        Debug.WriteLine($"[FuriganaServiceManager] Sidecar exited unexpectedly (exit code: {exitCode}).");
+
+        // Use debounced firing so a quick crash-restart cycle doesn't flash
+        // "Not running" before the process is back up.
+        RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
+        {
+            IsHealthy = false,
+            Status = null
+        });
+
+        // Auto-restart with exponential backoff
+        _ = AttemptRestartAsync();
+    }
+
+    private async Task AttemptRestartAsync()
+    {
+        if (_stopping || _restartAttempt >= MaxRestartAttempts)
+        {
+            return;
+        }
+
+        int delay = RestartBackoffDelaysMs[Math.Min(_restartAttempt, RestartBackoffDelaysMs.Length - 1)];
+        _restartAttempt++;
+
+        await Task.Delay(delay);
+
+        try
+        {
+            await StartAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] Restart attempt {_restartAttempt} failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the sidecar is healthy by calling <c>GET /health</c>.
+    /// </summary>
+    public async Task<bool> IsHealthyAsync()
+    {
+        try
+        {
+            var response = await GetClient().GetAsync("/health");
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the current sidecar status by calling <c>GET /status</c>.
+    /// </summary>
+    public async Task<FuriganaServiceStatus?> GetStatusAsync()
+    {
+        try
+        {
+            var response = await GetClient().GetAsync("/status");
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<FuriganaServiceStatus>(body);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] Error getting status: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Instructs the sidecar to stop loading FLFL and switch to Ollama degradation.
+    /// </summary>
+    public async Task DegradeToOllamaAsync()
+    {
+        try
+        {
+            var payload = new { target = "ollama" };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await GetClient().PostAsync("/degrade", content);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FuriganaServiceManager] Error degrading to Ollama: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Starts a periodic poll that monitors FLFL latency and auto-degrades to Ollama
+    /// when FLFL consistently exceeds the given threshold.
+    /// </summary>
+    /// <param name="thresholdMs">Latency threshold in ms (default 2000).</param>
+    public void StartDegradationMonitoring(int thresholdMs = 2000)
+    {
+        StopDegradationMonitoring(); // dispose any existing timer
+
+        _degradationPollTimer = new Timer(async _ =>
+        {
+            try
+            {
+                var status = await GetStatusAsync();
+                bool shouldDegrade;
+                lock (_lock)
+                {
+                    if (status?.FlflLatencyMs.HasValue == true && status.FlflLatencyMs.Value > thresholdMs)
+                    {
+                        _consecutiveSlowFlflCount++;
+                    }
+                    else
+                    {
+                        _consecutiveSlowFlflCount = 0;
+                    }
+
+                    shouldDegrade = _consecutiveSlowFlflCount >= 3 && !_isDegraded;
+                    if (shouldDegrade)
+                    {
+                        _isDegraded = true;
+                    }
+                }
+
+                if (shouldDegrade)
+                {
+                    await DegradeToOllamaAsync();
+                    DegradedChanged?.Invoke(this, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[FuriganaServiceManager] Degradation poll error: {ex.Message}");
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// Stops the degradation monitoring timer.
+    /// </summary>
+    public void StopDegradationMonitoring()
+    {
+        _degradationPollTimer?.Dispose();
+        _degradationPollTimer = null;
+    }
+
+    /// <summary>
+    /// Resets degradation state so FLFL is used again. Called by the user from Settings
+    /// to re-enable FLFL after a previous auto-degradation.
+    /// </summary>
+    public void ResetDegradation()
+    {
+        lock (_lock)
+        {
+            _isDegraded = false;
+            _consecutiveSlowFlflCount = 0;
+        }
+        DegradedChanged?.Invoke(this, false);
+    }
+
+    /// <summary>
+    /// Walks up from <see cref="AppDomain.CurrentDomain.BaseDirectory"/> looking for
+    /// a "furigana-service" directory. This handles both deployed installs (next to the exe)
+    /// and dev builds (several levels under bin/Debug/net8.0-windows/).
+    /// </summary>
+    internal static string? FindFuriganaServiceDir()
+    {
+        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "furigana-service");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "server.py")))
+                return candidate;
+            dir = dir.Parent;
+        }
+        return null;
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _stopping = true;
+            StopDegradationMonitoring();
+            lock (_statusDebounceLock)
+            {
+                _statusDebounce?.Cancel();
+                _statusDebounce?.Dispose();
+                _statusDebounce = null;
+            }
+            _httpClient?.Dispose();
+            _httpClient = null;
+
+            // Stop the process synchronously on dispose
+            lock (_lock)
+            {
+                if (_process != null && !_process.HasExited)
+                {
+                    try
+                    {
+                        _process.Exited -= OnProcessExited;
+                        _process.CloseMainWindow();
+                        if (!_process.WaitForExit(GracefulShutdownTimeoutMs))
+                        {
+                            try { _process.Kill(entireProcessTree: true); } catch { }
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        _process.Dispose();
+                        _process = null;
+                    }
+                }
+            }
+
+            _disposed = true;
+        }
+        GC.SuppressFinalize(this);
+    }
+}

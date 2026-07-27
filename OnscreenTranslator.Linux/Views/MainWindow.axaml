@@ -1,0 +1,91 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OnscreenTranslator.Linux.Views.MainWindow"
+        Title="Onscreen Translator"
+        Width="400" Height="600"
+        MinWidth="340" MinHeight="400"
+        WindowStartupLocation="CenterScreen"
+        ExtendClientAreaToDecorationsHint="False"
+        SystemDecorations="Full"
+        TransparencyLevelHint="None">
+
+    <Design.DataContext>
+        <!-- Design-time data context -->
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+        <!-- Header: provider selection -->
+        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
+            <TextBlock Text="Onscreen Translator" FontSize="18" FontWeight="Bold" />
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="OCR Provider" FontWeight="Medium" />
+                <ComboBox x:Name="OcrProviderCombo"
+                          SelectedIndex="0"
+                          SelectionChanged="OnOcrProviderChanged">
+                    <ComboBoxItem>Ollama (Local)</ComboBoxItem>
+                    <ComboBoxItem>OpenAI</ComboBoxItem>
+                    <ComboBoxItem>OpenAI-Compatible</ComboBoxItem>
+                    <ComboBoxItem>Remote Server</ComboBoxItem>
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Translation Provider" FontWeight="Medium" />
+                <ComboBox x:Name="TranslationProviderCombo"
+                          SelectedIndex="0"
+                          SelectionChanged="OnTranslationProviderChanged">
+                    <ComboBoxItem>Google Translate</ComboBoxItem>
+                    <ComboBoxItem>DeepL</ComboBoxItem>
+                    <ComboBoxItem>Ollama (Local)</ComboBoxItem>
+                    <ComboBoxItem>OpenAI</ComboBoxItem>
+                    <ComboBoxItem>OpenAI-Compatible</ComboBoxItem>
+                    <ComboBoxItem>Remote Server</ComboBoxItem>
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Remote server config (shown when remote is selected) -->
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                    BorderThickness="1" CornerRadius="4" Padding="8"
+                    IsVisible="False" x:Name="RemoteConfigPanel">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Remote Server" FontWeight="Bold" />
+                    <TextBox x:Name="RemoteUrlBox" Watermark="http://your-server:5000" />
+                    <TextBox x:Name="RemoteKeyBox" Watermark="API Key (optional)"
+                             PasswordChar="•" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <CheckBox x:Name="RemoteOcrCheck" IsChecked="True">OCR</CheckBox>
+                        <CheckBox x:Name="RemoteTranslationCheck" IsChecked="True">Translation</CheckBox>
+                        <CheckBox x:Name="RemoteDictCheck" IsChecked="True">Dictionary</CheckBox>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Translation result / captured text area -->
+        <Border Grid.Row="1" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                BorderThickness="1" CornerRadius="4" Padding="8">
+            <ScrollViewer>
+                <StackPanel Spacing="8">
+                    <TextBlock Text="OCR Result" FontWeight="Medium" />
+                    <TextBox x:Name="OcrTextBox" IsReadOnly="False"
+                             Watermark="OCR text will appear here..."
+                             AcceptsReturn="True" MinHeight="80" />
+                    <TextBlock Text="Translation" FontWeight="Medium" />
+                    <TextBox x:Name="TranslationTextBox" IsReadOnly="True"
+                             Watermark="Translation will appear here..."
+                             AcceptsReturn="True" MinHeight="80" />
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Bottom actions -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8"
+                    HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="CaptureBtn" Content="📷 Capture Region"
+                    Click="OnCaptureClicked" />
+            <Button x:Name="SettingsBtn" Content="⚙ Settings"
+                    Click="OnSettingsClicked" />
+        </StackPanel>
+    </Grid>
+</Window>

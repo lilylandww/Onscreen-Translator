@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OnscreenTranslator.Core</RootNamespace>
+    <AssemblyName>OnscreenTranslator.Core</AssemblyName>
+    <!-- Suppress Windows-only API warnings; System.Drawing works on Linux with libgdiplus.
+         TODO: Replace System.Drawing with SkiaSharp/ImageSharp for true cross-platform. -->
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DeepL.net" Version="1.15.0" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+</Project>

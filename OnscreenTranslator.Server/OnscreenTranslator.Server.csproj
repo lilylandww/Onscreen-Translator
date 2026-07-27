@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OnscreenTranslator.Server</RootNamespace>
+    <AssemblyName>OnscreenTranslator.Server</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OnscreenTranslator.Core/OnscreenTranslator.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -319,7 +319,7 @@ public class FuriganaServiceManager : IDisposable
             Status = null
         });
 
-        return Task.CompletedTask;
+        return;
     }
 
     private async void OnProcessExited(object? sender, EventArgs e)
