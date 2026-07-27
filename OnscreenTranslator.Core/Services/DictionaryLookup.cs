@@ -1,5 +1,9 @@
+using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
 namespace OnscreenTranslator.Core;
 
 public static partial class WWWJDict
@@ -7,20 +11,17 @@ public static partial class WWWJDict
     private static readonly HttpClient client = new();
     private static readonly string BaseUrl = "http://www.edrdg.org/cgi-bin/wwwjdic/wwwjdic?1ZUJ";
 
-    public static List<string> LookUp(string searchKeys)
+    /// <summary>Async lookup — replaces the old sync-over-async deadlock-prone method.</summary>
+    public static async Task<List<string>> LookUpAsync(string searchKeys)
     {
         string url = BaseUrl + searchKeys;
         List<string> resultsList = [];
         try
         {
-            Task<HttpResponseMessage> responseTask = client.GetAsync(url);
-            responseTask.Wait();
-            HttpResponseMessage response = responseTask.Result;
+            HttpResponseMessage response = await client.GetAsync(url);
             response.EnsureSuccessStatusCode();
 
-            Task<string> readTask = response.Content.ReadAsStringAsync();
-            readTask.Wait();
-            string responseBody = readTask.Result;
+            string responseBody = await response.Content.ReadAsStringAsync();
 
             int preStart = responseBody.IndexOf("<pre>");
             int preEnd = responseBody.IndexOf("</pre>");
@@ -56,7 +57,10 @@ public static partial class WWWJDict
         return resultsList;
     }
 
-    public static List<JapaneseWord> GetSearchResults(string inputString)
+    /// <summary>
+    /// Async version of GetSearchResults. Parses WWWJDIC response lines into typed JapaneseWord objects.
+    /// </summary>
+    public static async Task<List<JapaneseWord>> GetSearchResultsAsync(string inputString)
     {
         if (string.IsNullOrWhiteSpace(inputString))
         {
@@ -65,7 +69,7 @@ public static partial class WWWJDict
         }
 
         // Get the list of string results
-        var results = LookUp(inputString);
+        var results = await LookUpAsync(inputString);
         List<JapaneseWord> japaneseWords = [];
 
         foreach (string line in results)
@@ -94,8 +98,8 @@ public static partial class WWWJDict
             for (int i = 0; i < meanings.Length; i++)
             {
                 string meaning = meanings[i].Trim();
-                meaning = System.Text.RegularExpressions.Regex.Replace(meaning, @"^\(.*?\)\s*", "");
-                meaning = System.Text.RegularExpressions.Regex.Replace(meaning, @"^\(\d+\)\s*", "");
+                meaning = MyRegex().Replace(meaning, "");
+                meaning = MyRegex1().Replace(meaning, "");
                 if (!string.IsNullOrEmpty(meaning))
                 {
                     processedMeanings.Add(meaning);

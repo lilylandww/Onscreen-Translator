@@ -46,15 +46,16 @@ public class RemoteOCRProvider : IOCRProvider, IDisposable
         return doc.RootElement.GetProperty("text").GetString() ?? "";
     }
 
-    public Task<bool> IsAvailableAsync()
+    public async Task<bool> IsAvailableAsync()
     {
         try
         {
-            return Task.FromResult(_http.BaseAddress != null);
+            var response = await _http.GetAsync("/api/health");
+            return response.IsSuccessStatusCode;
         }
         catch
         {
-            return Task.FromResult(false);
+            return false;
         }
     }
 

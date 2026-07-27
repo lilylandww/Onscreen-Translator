@@ -20,7 +20,7 @@ public static class ProviderFactory
     /// <summary>
     /// All available translation provider names.
     /// </summary>
-    public static readonly string[] AvailableTranslationProviders = ["google", "deepl", "ollama", "openai", "openai-compatible"];
+    public static readonly string[] AvailableTranslationProviders = ["google", "deepl", "ollama", "openai", "openai-compatible", "remote"];
 
     /// <summary>
     /// Display names for OCR providers.
@@ -80,12 +80,10 @@ public static class ProviderFactory
                 ApiKey = config.ApiKey,
                 Model = config.OcrModel
             },
-            "remote" => new RemoteOCRProvider(settings.RemoteServer),
-            _ => new OllamaOCRProvider
-            {
-                BaseUrl = settings.GetProviderConfig("ollama").BaseUrl,
-                Model = settings.GetProviderConfig("ollama").OcrModel
-            }
+            "remote" => settings.RemoteServer.Enabled
+                ? new RemoteOCRProvider(settings.RemoteServer)
+                : throw new InvalidOperationException("Remote server is not enabled in settings."),
+            _ => throw new ArgumentException($"Unknown OCR provider: {providerName}", nameof(providerName))
         };
     }
 
@@ -130,6 +128,12 @@ public static class ProviderFactory
             Model = compatConfig.TranslationModel
         });
 
+        // Remote Server
+        if (settings.RemoteServer.Enabled)
+        {
+            providers.Add(new RemoteTranslationProvider(settings.RemoteServer));
+        }
+
         return providers;
     }
 
@@ -161,7 +165,9 @@ public static class ProviderFactory
                 ApiKey = config.ApiKey,
                 Model = config.TranslationModel
             },
-            "remote" => new RemoteTranslationProvider(settings.RemoteServer),
+            "remote" => settings.RemoteServer.Enabled
+                ? new RemoteTranslationProvider(settings.RemoteServer)
+                : throw new InvalidOperationException("Remote server is not enabled in settings."),
             _ => throw new ArgumentException($"Unknown translation provider: {providerName}", nameof(providerName))
         };
     }

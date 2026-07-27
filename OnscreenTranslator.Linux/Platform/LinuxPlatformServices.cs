@@ -20,15 +20,13 @@ public class LinuxPlatformServices : IPlatformServices
     {
         return Task.Run(() =>
         {
-            var tmp = Path.GetTempFileName() + ".png";
+            var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".png");
             try
             {
-                // Use maim (preferred) or import (ImageMagick) for screenshots
-                var args = IsWayland()
-                    ? $"--format=png --file={tmp} --geometry={region.Width}x{region.Height}+{region.X}+{region.Y}"
-                    : $"-silent -window root -crop {region.Width}x{region.Height}+{region.X}+{region.Y} {tmp}";
-
-                var tool = IsWayland() ? "grim" : (HasTool("maim") ? "maim" : "import");
+                var tool = IsWayland()
+                    ? (HasTool("grim") ? "grim" : throw new InvalidOperationException(
+                        "Wayland detected but 'grim' is not installed. Install grim (sudo apt install grim) or use X11."))
+                    : (HasTool("maim") ? "maim" : "import");
                 var toolArgs = IsWayland()
                     ? $"-g \"{region.X},{region.Y} {region.Width}x{region.Height}\" {tmp}"
                     : tool == "maim"
@@ -164,8 +162,12 @@ public class LinuxPlatformServices : IPlatformServices
             }
         };
         proc.Start();
+        // Read stderr concurrently to prevent pipe-buffer deadlock.
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        var stdout = proc.StandardOutput.ReadToEnd();
         proc.WaitForExit(5000);
-        return proc.StandardOutput.ReadToEnd();
+        try { stderrTask.GetAwaiter().GetResult(); } catch { /* swallow */ }
+        return stdout;
     }
 
     private static void RunCommand(string command, string args)
@@ -183,7 +185,14 @@ public class LinuxPlatformServices : IPlatformServices
             }
         };
         proc.Start();
+        // Read stderr concurrently to prevent pipe-buffer deadlock.
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        proc.StandardOutput.ReadToEnd();
         proc.WaitForExit(5000);
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Command '{command} {args}' failed (exit {proc.ExitCode}): {stderr.Trim()}");
     }
 
     private static bool IsWayland()

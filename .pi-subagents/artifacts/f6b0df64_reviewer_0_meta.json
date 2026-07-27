@@ -1,0 +1,139 @@
+{
+  "runId": "f6b0df64",
+  "agent": "reviewer",
+  "task": "[Read from: /home/tupi/code/Onscreen-Translator/plan.md, /home/tupi/code/Onscreen-Translator/progress.md]\n\nThoroughly review the OnscreenTranslator.Core library code. Focus on:\n1. Interface design (IOCRProvider, ITranslationProvider, IPlatformServices) — are the abstractions clean, future-proof, and platform-agnostic?\n2. Provider implementations — correctness, error handling, threading/async issues, HttpClient lifecycle\n3. RemoteOCRProvider and RemoteTranslationProvider — security concerns, proper URL handling, auth\n4. AppSettings design — JSON serialization, ProtectedStringConverter cross-platform fallback, RemoteServerConfig\n5. ProviderFactory — extensibility, the new 'remote' case, switch completeness\n6. FuriganaServiceManager — process lifecycle, error recovery, the async fix that was applied\n7. Platform/IPlatformServices.cs — is the abstraction sufficient for Windows and Linux?\n\nFlag bugs, design flaws, missing edge cases, and suggest concrete fixes. Be critical.",
+  "exitCode": 0,
+  "usage": {
+    "input": 44895,
+    "output": 11294,
+    "cacheRead": 1184704,
+    "cacheWrite": 0,
+    "cost": 0.012764791199999998,
+    "turns": 42
+  },
+  "model": "opencode-go/mimo-v2.5:high",
+  "attemptedModels": [
+    "opencode-go/mimo-v2.5:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "opencode-go/mimo-v2.5:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 44895,
+        "output": 11294,
+        "cacheRead": 1184704,
+        "cacheWrite": 0,
+        "cost": 0.012764791199999998,
+        "turns": 42
+      }
+    }
+  ],
+  "durationMs": 237128,
+  "toolCount": 71,
+  "acceptance": {
+    "status": "attested",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [
+            "review-findings",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "review-findings",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [
+          "review-findings",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Concrete findings with file paths and severity provided: 4 blockers, 8 major issues, 12 notes covering all 7 review focus areas (interfaces, providers, remote, settings, factory, furigana, platform)"
+        }
+      ],
+      "changedFiles": [],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": "dotnet build OnscreenTranslator.Core/OnscreenTranslator.Core.csproj",
+          "result": "passed",
+          "summary": "0 warnings, 0 errors — Core library compiles cleanly"
+        },
+        {
+          "command": "git diff HEAD~1 --stat",
+          "result": "passed",
+          "summary": "38 files changed, 3897 insertions, 1 deletion in the core extraction commit"
+        },
+        {
+          "command": "find . -name '*Test*' -o -name '*test*' | grep -v bin | grep -v obj",
+          "result": "passed",
+          "summary": "No .NET unit tests exist in the repository — only Python tests in furigana-service/tests/"
+        }
+      ],
+      "validationOutput": [
+        "Core library builds with 0 warnings 0 errors",
+        "All 15 Core .cs files reviewed for interface design, correctness, error handling, threading, security, and lifecycle",
+        "ProviderFactory switch completeness verified — 'remote' missing from AvailableTranslationProviders",
+        "Sync-over-async found in DictionaryLookup.cs (4 occurrences of .Wait()/.Result)",
+        "HttpClient instantiation audit: 10 separate instances across providers (anti-pattern)"
+      ],
+      "residualRisks": [
+        "Zero .NET unit test coverage for entire Core library — ParseRubyOutput, CleanOcrOutput, ProtectedStringConverter are all untested",
+        "System.Drawing.Bitmap dependency will cause PlatformNotSupportedException on .NET 9+ for non-Windows without libgdiplus",
+        "Synchronous HTTP calls in DictionaryLookup.cs will deadlock on UI threads",
+        "ProtectedStringConverter XOR fallback provides no real security for API keys on disk"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "Review of the Core library extraction commit (dadcb37) — 38 new files moving shared providers, interfaces, settings, and services into OnscreenTranslator.Core",
+      "reviewFindings": [
+        "blocker: DictionaryLookup.cs:17-23 — sync-over-async (.Wait()/.Result) will deadlock on UI threads",
+        "blocker: ProviderFactory.cs:18 — AvailableTranslationProviders missing 'remote' despite DisplayNames and CreateTranslationProvider handling it",
+        "blocker: RemoteOCRProvider.cs:46-54 — IsAvailableAsync is a no-op (always returns true), same for RemoteTranslationProvider.cs:52-60",
+        "blocker: FuriganaServiceManager.cs:335 — async void OnProcessExited with unguarded await IsHealthyAsync can crash process",
+        "major: Providers (all) — each creates own HttpClient (10 instances total), anti-pattern causing socket exhaustion",
+        "major: AppSettings.cs:110-117 — encryption failure silently stores API keys as plaintext",
+        "major: AppSettings.cs:113-118 — XOR fallback with hardcoded key is not real encryption",
+        "major: DeepLTranslationProvider.cs:27 — CancellationToken not passed to TranslateTextAsync",
+        "major: OllamaOCRProvider.cs:205 + OpenAIOCRProvider.cs:182 — duplicated CleanOcrOutput (~60 lines each)",
+        "major: ProviderFactory.cs:78-82 — CreateOcrProvider default silently falls back to Ollama instead of throwing",
+        "major: ProviderFactory.cs:78-110 — CreateTranslationProviders (plural) doesn't include RemoteTranslationProvider",
+        "major: OpenAIOCRProvider.cs:48-53 — BaseUrl setter mutates HttpClient.BaseAddress after creation (thread-unsafe)"
+      ],
+      "manualNotes": "The codebase is well-structured overall — the Core extraction is clean, interfaces are properly designed, and FuriganaServiceManager is notably well-engineered. The main risk areas are (1) missing test coverage, (2) HttpClient lifecycle, (3) the security model for API key storage, and (4) the sync-over-async in DictionaryLookup. None are regressions from the extraction — they pre-exist and should be tracked as tech debt."
+    }
+  },
+  "transcriptPath": "/home/tupi/code/Onscreen-Translator/.pi-subagents/artifacts/f6b0df64_reviewer_0_transcript.jsonl",
+  "timestamp": 1785123017686
+}

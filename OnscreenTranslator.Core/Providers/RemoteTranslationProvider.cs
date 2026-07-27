@@ -50,15 +50,16 @@ public class RemoteTranslationProvider : ITranslationProvider, IDisposable
         return doc.RootElement.GetProperty("translatedText").GetString() ?? "";
     }
 
-    public Task<bool> IsAvailableAsync()
+    public async Task<bool> IsAvailableAsync()
     {
         try
         {
-            return Task.FromResult(_http.BaseAddress != null);
+            var response = await _http.GetAsync("/api/health");
+            return response.IsSuccessStatusCode;
         }
         catch
         {
-            return Task.FromResult(false);
+            return false;
         }
     }
 

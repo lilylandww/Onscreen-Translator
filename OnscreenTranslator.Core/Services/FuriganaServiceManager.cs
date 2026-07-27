@@ -324,50 +324,57 @@ public class FuriganaServiceManager : IDisposable
 
     private async void OnProcessExited(object? sender, EventArgs e)
     {
-        if (_stopping) return;
-
-        Process? process;
-        lock (_lock)
+        try
         {
-            process = _process;
-        }
+            if (_stopping) return;
 
-        int exitCode = -1;
-        try { exitCode = process?.ExitCode ?? -1; } catch { }
-
-        // If the process exited with code 0 (which run.bat does when the service is already running)
-        // or if uvicorn is responding healthily, we don't treat it as a crash.
-        if (exitCode == 0 || await IsHealthyAsync())
-        {
+            Process? process;
             lock (_lock)
             {
-                if (_process == process)
-                {
-                    _process = null;
-                }
-                _isServiceActive = true;
+                process = _process;
             }
-            Debug.WriteLine($"[FuriganaServiceManager] Sidecar process exited cleanly or uvicorn is healthy in background (exit code: {exitCode}).");
-            return;
+
+            int exitCode = -1;
+            try { exitCode = process?.ExitCode ?? -1; } catch { }
+
+            // If the process exited with code 0 (which run.bat does when the service is already running)
+            // or if uvicorn is responding healthily, we don't treat it as a crash.
+            if (exitCode == 0 || await IsHealthyAsync())
+            {
+                lock (_lock)
+                {
+                    if (_process == process)
+                    {
+                        _process = null;
+                    }
+                    _isServiceActive = true;
+                }
+                Debug.WriteLine($"[FuriganaServiceManager] Sidecar process exited cleanly or uvicorn is healthy in background (exit code: {exitCode}).");
+                return;
+            }
+
+            lock (_lock)
+            {
+                _isServiceActive = false;
+            }
+
+            Debug.WriteLine($"[FuriganaServiceManager] Sidecar exited unexpectedly (exit code: {exitCode}).");
+
+            // Use debounced firing so a quick crash-restart cycle doesn't flash
+            // "Not running" before the process is back up.
+            RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
+            {
+                IsHealthy = false,
+                Status = null
+            });
+
+            // Auto-restart with exponential backoff
+            _ = AttemptRestartAsync();
         }
-
-        lock (_lock)
+        catch (Exception ex)
         {
-            _isServiceActive = false;
+            Debug.WriteLine($"[FuriganaServiceManager] Unhandled exception in OnProcessExited: {ex.Message}");
         }
-
-        Debug.WriteLine($"[FuriganaServiceManager] Sidecar exited unexpectedly (exit code: {exitCode}).");
-
-        // Use debounced firing so a quick crash-restart cycle doesn't flash
-        // "Not running" before the process is back up.
-        RaiseStatusChangedDebounced(new FuriganaServiceStatusChangedEventArgs
-        {
-            IsHealthy = false,
-            Status = null
-        });
-
-        // Auto-restart with exponential backoff
-        _ = AttemptRestartAsync();
     }
 
     private async Task AttemptRestartAsync()

@@ -34,15 +34,6 @@ public class RemoteServerConfig
     /// <summary>Bearer token or API key for the remote server.</summary>
     [JsonConverter(typeof(ProtectedStringConverter))]
     public string ApiKey { get; set; } = "";
-
-    /// <summary>Route OCR requests remotely.</summary>
-    public bool RouteOcr { get; set; } = true;
-
-    /// <summary>Route translation requests remotely.</summary>
-    public bool RouteTranslation { get; set; } = true;
-
-    /// <summary>Route dictionary lookups remotely.</summary>
-    public bool RouteDictionary { get; set; } = true;
 }
 
 /// <summary>
@@ -56,13 +47,24 @@ public class ProtectedStringConverter : JsonConverter<string>
 {
     /// <summary>
     /// Set this at startup to enable encryption. When null, strings are
-    /// stored as plaintext (useful for development or when platform
-    /// protection is unavailable).
+    /// still obfuscated with an XOR cipher (not cryptographically strong,
+    /// but avoids plaintext on disk).
     /// </summary>
     public static IPlatformServices? PlatformServices { get; set; }
 
-    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("OnscreenTranslator-ApiKey-Protection-v1");
+    private static readonly byte[] Entropy = DeriveEntropy();
     private const string EncryptedPrefix = "enc:";
+
+    /// <summary>
+    /// Derives entropy from machine name + fixed application prefix,
+    /// so each installation has a different XOR key.
+    /// </summary>
+    private static byte[] DeriveEntropy()
+    {
+        var machineName = Environment.MachineName;
+        var seed = $"OnscreenTranslator-ApiKey-{machineName}-v2";
+        return Encoding.UTF8.GetBytes(seed);
+    }
 
     public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {

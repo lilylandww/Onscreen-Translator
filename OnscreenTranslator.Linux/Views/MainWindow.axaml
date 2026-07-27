@@ -13,7 +13,7 @@
         <!-- Design-time data context -->
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="12">
         <!-- Header: provider selection -->
         <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
             <TextBlock Text="Onscreen Translator" FontSize="18" FontWeight="Bold" />
@@ -53,11 +53,6 @@
                     <TextBox x:Name="RemoteUrlBox" Watermark="http://your-server:5000" />
                     <TextBox x:Name="RemoteKeyBox" Watermark="API Key (optional)"
                              PasswordChar="•" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <CheckBox x:Name="RemoteOcrCheck" IsChecked="True">OCR</CheckBox>
-                        <CheckBox x:Name="RemoteTranslationCheck" IsChecked="True">Translation</CheckBox>
-                        <CheckBox x:Name="RemoteDictCheck" IsChecked="True">Dictionary</CheckBox>
-                    </StackPanel>
                 </StackPanel>
             </Border>
         </StackPanel>
@@ -87,5 +82,11 @@
             <Button x:Name="SettingsBtn" Content="⚙ Settings"
                     Click="OnSettingsClicked" />
         </StackPanel>
+
+        <!-- Status bar -->
+        <TextBlock Grid.Row="3" x:Name="_statusBar"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                   FontSize="11" Margin="0,6,0,0"
+                   Text="" />
     </Grid>
 </Window>

@@ -1,0 +1,198 @@
+{
+  "runId": "80bc7478",
+  "agent": "worker",
+  "task": "[Read from: /home/tupi/code/Onscreen-Translator/context.md, /home/tupi/code/Onscreen-Translator/plan.md]\n\nYou are a delegated subagent running from a fork of the parent session. Treat the inherited conversation as reference-only context, not a live thread to continue. Do not continue or answer prior messages as if they are waiting for a reply. Your sole job is to execute the task below and return a focused result for that task using your tools.\n\nTask:\nFix critical and major issues in OnscreenTranslator.Core based on code review findings. The files to edit are under /home/tupi/code/Onscreen-Translator/OnscreenTranslator.Core/. Make ALL of the following fixes:\n\n1. DictionaryLookup.cs: Fix sync-over-async deadlock — make LookUp() properly async. The `responseTask.Wait()` and `.Result` will deadlock on UI threads. Make the method use async/await throughout.\n\n2. ProviderFactory.cs line ~18: Add \"remote\" to AvailableTranslationProviders array (it's currently missing but display names and CreateTranslationProvider handle it).\n\n3. ProviderFactory.cs CreateOcrProvider default case: Throw ArgumentException for unknown provider names (currently silently falls back to Ollama). Match CreateTranslationProvider behavior.\n\n4. ProviderFactory.cs CreateTranslationProviders (plural): Add RemoteTranslationProvider creation (currently missing, only creates 5 providers).\n\n5. RemoteOCRProvider.cs and RemoteTranslationProvider.cs: Fix IsAvailableAsync() to actually check server health via GET /api/health instead of just checking BaseAddress != null.\n\n6. FuriganaServiceManager.cs OnProcessExited: Wrap the entire async void body in try-catch to prevent process crash from unhandled exceptions.\n\n7. DeepLTranslationProvider.cs: Pass the CancellationToken through to TranslateTextAsync call.\n\n8. Create a new file Providers/OcrOutputCleaner.cs: Extract the duplicated CleanOcrOutput method (nearly identical in OllamaOCRProvider and OpenAIOCRProvider) into a shared static utility class. Then update both providers to use it.\n\n9. Settings/AppSettings.cs: Fix ProtectedStringConverter — when encryption fails, log a warning via Debug.WriteLine and still encrypt with XOR fallback rather than silently storing plaintext. Also improve the entropy to be per-installation (use machine name hash + fixed prefix).\n\n10. Settings/AppSettings.cs: Integrate RemoteServerConfig.RouteOcr/RouteTranslation/RouteDictionary — actually use them. When RouteOcr is false but provider is \"remote\", the factory should throw or fall back to default. Or better: remove these dead config properties and simplify to just Enabled + BaseUrl + ApiKey.\n\n11. Move IModelListable interface from Interfaces/IOCRProvider.cs into its own file Interfaces/IModelListable.cs and update all usings.\n\nAfter each fix, verify the Core project still builds: dotnet build OnscreenTranslator.Core/OnscreenTranslator.Core.csproj\n\nBe thorough — read each file, make precise edits, verify build.\n\n---\nUpdate progress at: /home/tupi/code/Onscreen-Translator/.pi-subagents/artifacts/progress/80bc7478/progress.md",
+  "exitCode": 0,
+  "usage": {
+    "input": 91900,
+    "output": 18824,
+    "cacheRead": 4240128,
+    "cacheWrite": 0,
+    "cost": 0.030009078399999993,
+    "turns": 47
+  },
+  "model": "opencode-go/deepseek-v4-flash:high",
+  "attemptedModels": [
+    "opencode-go/deepseek-v4-flash:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "opencode-go/deepseek-v4-flash:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 91900,
+        "output": 18824,
+        "cacheRead": 4240128,
+        "cacheWrite": 0,
+        "cost": 0.030009078399999993,
+        "turns": 47
+      }
+    }
+  ],
+  "durationMs": 235573,
+  "toolCount": 56,
+  "acceptance": {
+    "status": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "write-capable worker/task"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "not-applicable",
+        "message": "tests-added evidence explicitly reported as not applicable."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "All 11 core fixes implemented without widening scope to add new features."
+        }
+      ],
+      "changedFiles": [
+        "OnscreenTranslator.Core/Interfaces/IOCRProvider.cs",
+        "OnscreenTranslator.Core/Interfaces/IModelListable.cs",
+        "OnscreenTranslator.Core/Providers/OcrOutputCleaner.cs",
+        "OnscreenTranslator.Core/Providers/ProviderFactory.cs",
+        "OnscreenTranslator.Core/Providers/RemoteOCRProvider.cs",
+        "OnscreenTranslator.Core/Providers/RemoteTranslationProvider.cs",
+        "OnscreenTranslator.Core/Providers/OllamaOCRProvider.cs",
+        "OnscreenTranslator.Core/Providers/OpenAIOCRProvider.cs",
+        "OnscreenTranslator.Core/Providers/DeepLTranslationProvider.cs",
+        "OnscreenTranslator.Core/Services/DictionaryLookup.cs",
+        "OnscreenTranslator.Core/Services/FuriganaServiceManager.cs",
+        "OnscreenTranslator.Core/Settings/AppSettings.cs",
+        "OnscreenTranslator.Linux/Views/MainWindow.axaml",
+        "OnscreenTranslator.Linux/Views/MainWindow.axaml.cs",
+        "MainWindow.xaml.cs"
+      ],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": "dotnet build OnscreenTranslator.Core/OnscreenTranslator.Core.csproj",
+          "result": "passed",
+          "summary": "0 warnings, 0 errors"
+        },
+        {
+          "command": "dotnet build OnscreenTranslator.Linux/OnscreenTranslator.Linux.csproj",
+          "result": "passed",
+          "summary": "0 warnings, 0 errors"
+        },
+        {
+          "command": "dotnet build OnscreenTranslator.Server/OnscreenTranslator.Server.csproj",
+          "result": "passed",
+          "summary": "0 warnings, 0 errors"
+        },
+        {
+          "command": "dotnet build WpfAppTest.csproj",
+          "result": "passed",
+          "summary": "0 warnings, 0 errors"
+        }
+      ],
+      "validationOutput": [
+        "All 4 projects build with 0 warnings, 0 errors after fixes"
+      ],
+      "residualRisks": [
+        "DictionaryLookup now async-only; WPF MainWindow.xaml.cs caller updated to async void event handler",
+        "XOR fallback in ProtectedStringConverter still not cryptographic-grade; DPAPI/libsecret integration deferred to platform service implementations"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "11 fixes across Core library: async deadlock fix, remote provider validation, shared OCR output cleaner, ProtectedStringConverter hardening, RemoteServerConfig simplification, IModelListable extraction, CancellationToken pass-through, exception safety in async void handler",
+      "reviewFindings": [
+        "FIXED: DictionaryLookup sync-over-async deadlock — made fully async with async/await throughout",
+        "FIXED: ProviderFactory missing 'remote' in AvailableTranslationProviders — added",
+        "FIXED: ProviderFactory silent fallback to Ollama — now throws ArgumentException for unknown OCR providers",
+        "FIXED: CreateTranslationProviders missing RemoteTranslationProvider — added",
+        "FIXED: RemoteOCRProvider/RemoteTranslationProvider IsAvailableAsync no-op — now calls /api/health",
+        "FIXED: FuriganaServiceManager OnProcessExited async void uncaught exceptions — wrapped in try-catch",
+        "FIXED: DeepLTranslationProvider CancellationToken not passed — now forwarded to TranslateTextAsync",
+        "FIXED: Duplicated CleanOcrOutput in Ollama/OpenAI providers — extracted to shared OcrOutputCleaner",
+        "FIXED: ProtectedStringConverter weak entropy — now per-installation (machine name), always uses XOR fallback",
+        "FIXED: RemoteServerConfig dead RouteOcr/RouteTranslation/RouteDictionary — simplified to Enabled + BaseUrl + ApiKey, validation added in ProviderFactory",
+        "FIXED: IModelListable in wrong file — moved to own Interfaces/IModelListable.cs"
+      ],
+      "manualNotes": "Linux MainWindow.axaml and MainWindow.axaml.cs were also updated to remove references to the deleted RemoteServerConfig routing properties. WPF MainWindow.xaml.cs was updated to use the new async GetSearchResultsAsync."
+    }
+  },
+  "transcriptPath": "/home/tupi/code/Onscreen-Translator/.pi-subagents/artifacts/80bc7478_worker_0_transcript.jsonl",
+  "timestamp": 1785124563802
+}

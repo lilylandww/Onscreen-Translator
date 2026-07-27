@@ -25,7 +25,7 @@ public class DeepLTranslationProvider : ITranslationProvider
         var sourceLangCode = sourceLang == "ja" ? LanguageCode.Japanese : sourceLang;
         var targetLangCode = targetLang == "en" ? LanguageCode.EnglishAmerican : targetLang;
 
-        var result = await _translator.TranslateTextAsync(text, sourceLangCode, targetLangCode);
+        var result = await _translator.TranslateTextAsync(text, sourceLangCode, targetLangCode, cancellationToken: ct);
         return result.ToString();
     }
 

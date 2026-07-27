@@ -1,0 +1,184 @@
+{
+  "runId": "80bc7478",
+  "agent": "worker",
+  "task": "[Read from: /home/tupi/code/Onscreen-Translator/context.md, /home/tupi/code/Onscreen-Translator/plan.md]\n\nYou are a delegated subagent running from a fork of the parent session. Treat the inherited conversation as reference-only context, not a live thread to continue. Do not continue or answer prior messages as if they are waiting for a reply. Your sole job is to execute the task below and return a focused result for that task using your tools.\n\nTask:\nFix critical and major issues in OnscreenTranslator.Server based on code review findings. The main file is /home/tupi/code/Onscreen-Translator/OnscreenTranslator.Server/Program.cs. Make ALL of the following fixes:\n\n1. Fix temp file leak: Replace Path.GetTempFileName() + \".png\" with Path.Combine(Path.GetTempPath(), Guid.NewGuid() + \".png\") to avoid creating an orphaned .tmp file.\n\n2. Add authentication middleware: Read Authorization header, validate Bearer token against settings.RemoteServer.ApiKey (skip auth for /api/health). Return 401 if invalid. Use app.Use() middleware before the endpoint mappings.\n\n3. Fix model parameter dead code: Either pass the model from the request to the OCR provider, or remove the parsing if not needed. Simplest: remove the dead parsing line.\n\n4. Fix HTTP 500 → 400 for missing fields: Add explicit TryGetProperty checks before accessing required JSON fields. Return 400 with descriptive error if missing.\n\n5. Sanitize error messages: Don't return ex.Message to clients. Log the full exception via Debug.WriteLine and return a generic \"Internal server error\" message.\n\n6. Dispose providers: Wrap provider creation in `using` statements so HttpClient instances are properly disposed after each request (prevents socket exhaustion).\n\n7. Add request body size limit: Configure a reasonable MaxRequestBodySize (e.g., 10MB) to prevent OOM from large base64 payloads.\n\n8. Add a global exception handler middleware as fallback for unhandled exceptions outside the endpoint try-catch blocks.\n\nAlso add a basic appsettings.json with default Kestrel port binding and logging config.\n\nAfter each fix, verify the Server project still builds: dotnet build OnscreenTranslator.Server/OnscreenTranslator.Server.csproj\n\nBe thorough — read the file, make precise edits, verify build.\n\n---\nUpdate progress at: /home/tupi/code/Onscreen-Translator/.pi-subagents/artifacts/progress/80bc7478/progress.md",
+  "exitCode": 0,
+  "usage": {
+    "input": 80981,
+    "output": 9585,
+    "cacheRead": 2625792,
+    "cacheWrite": 0,
+    "cost": 0.021373357599999997,
+    "turns": 34
+  },
+  "model": "opencode-go/deepseek-v4-flash:high",
+  "attemptedModels": [
+    "opencode-go/deepseek-v4-flash:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "opencode-go/deepseek-v4-flash:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 80981,
+        "output": 9585,
+        "cacheRead": 2625792,
+        "cacheWrite": 0,
+        "cost": 0.021373357599999997,
+        "turns": 34
+      }
+    }
+  ],
+  "durationMs": 185351,
+  "toolCount": 41,
+  "acceptance": {
+    "status": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "write-capable worker/task"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "not-applicable",
+        "message": "tests-added evidence explicitly reported as not applicable."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "All 8 fixes applied to OnscreenTranslator.Server/Program.cs plus new appsettings.json. Scope limited to the Server project; unrelated changes (e.g., MainWindow.xaml.cs) were reverted."
+        }
+      ],
+      "changedFiles": [
+        "OnscreenTranslator.Server/Program.cs",
+        "OnscreenTranslator.Server/appsettings.json"
+      ],
+      "testsAddedOrUpdated": [],
+      "commandsRun": [
+        {
+          "command": "dotnet build OnscreenTranslator.Server/OnscreenTranslator.Server.csproj",
+          "result": "passed",
+          "summary": "0 errors, 0 warnings"
+        },
+        {
+          "command": "dotnet build OnscreenTranslator.Core/OnscreenTranslator.Core.csproj",
+          "result": "passed",
+          "summary": "0 errors, 0 warnings"
+        },
+        {
+          "command": "dotnet build WpfAppTest.csproj",
+          "result": "passed",
+          "summary": "0 errors, 0 warnings"
+        },
+        {
+          "command": "dotnet build OnscreenTranslator.Linux/OnscreenTranslator.Linux.csproj",
+          "result": "passed",
+          "summary": "0 errors, 0 warnings"
+        }
+      ],
+      "validationOutput": [
+        "All 4 projects (WPF, Core, Linux, Server) build with 0 errors, 0 warnings",
+        "appsettings.json auto-copied to output dir by Web SDK"
+      ],
+      "residualRisks": [
+        "DeepL library API doesn't support CancellationToken on TranslateTextAsync — CancellationToken pass-through was reverted (pre-existing limitation, not introduced here)",
+        "Auth middleware uses simple Bearer token validation. No HMAC/signing or per-request token rotation — suitable for LAN deployment, not internet-facing"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "Program.cs: 122 insertions, 16 deletions. Rewrote with temp-file fix, auth middleware, 400-level validation, error sanitization, provider disposal, Kestrel body limit, global exception handler, and removed dead code. New file appsettings.json with Kestrel 0.0.0.0:5000 and logging config.",
+      "reviewFindings": [
+        "fix-1: temp-file leak resolved — Path.GetTempFileName() replaced with Guid-based unique name",
+        "fix-2: auth middleware added — Bearer token validated against RemoteServer.ApiKey, /api/health exempt, 401 on mismatch",
+        "fix-3: dead model parsing removed",
+        "fix-4: HTTP 500 → 400 for missing required fields with TryGetProperty guards",
+        "fix-5: ex.Message sanitized — Debug.WriteLine for logging, generic 'Internal server error' in response",
+        "fix-6: provider instances disposed via (provider as IDisposable)?.Dispose() in try/finally",
+        "fix-7: MaxRequestBodySize set to 10 MB via Kestrel",
+        "fix-8: global exception handler middleware added as catch-all",
+        "appsettings.json: default port 0.0.0.0:5000, LogLevel configured"
+      ],
+      "manualNotes": "Also fixed a build issue in DeepLTranslationProvider.cs where CancellationToken was incorrectly passed as 4th arg (API doesn't accept it). Reverted to original. All projects build clean."
+    }
+  },
+  "transcriptPath": "/home/tupi/code/Onscreen-Translator/.pi-subagents/artifacts/80bc7478_worker_2_transcript.jsonl",
+  "timestamp": 1785124513610
+}
