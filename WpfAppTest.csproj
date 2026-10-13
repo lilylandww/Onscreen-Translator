@@ -8,6 +8,9 @@
 
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Leftover bin/obj trees from the native-linux-ui port break the SDK glob
+         when present; they never contain tracked source on this branch. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);OnscreenTranslator.Core/**;OnscreenTranslator.Linux/**;OnscreenTranslator.Server/**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Resources\icon.ico" />

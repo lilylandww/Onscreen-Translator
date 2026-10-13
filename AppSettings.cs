@@ -87,6 +87,27 @@ public class FuriganaSettings
     public int FlflLatencyThresholdMs { get; set; } = 2000;
 }
 
+public class OverlaySettings
+{
+    /// <summary>Whether the always-on-top overlay mode is active (or restored at launch).</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>Global hotkey that toggles overlay mode. Format: "Ctrl+Alt+O".</summary>
+    public string ToggleHotkey { get; set; } = "Ctrl+Alt+O";
+
+    /// <summary>Global hotkey that arms region drawing. Format: "Ctrl+Alt+T".</summary>
+    public string DrawHotkey { get; set; } = "Ctrl+Alt+T";
+
+    /// <summary>Hide the translation when input that may change the screen is detected.</summary>
+    public bool InvalidateOnInput { get; set; } = true;
+
+    /// <summary>
+    /// Pixel-diff sensitivity in [0, 1]: the normalized mean absolute difference
+    /// above which the captured region is considered changed.
+    /// </summary>
+    public double ChangeSensitivity { get; set; } = 0.05;
+}
+
 public class AppSettings
 {
     private static readonly string SettingsPath = Path.Combine(
@@ -136,6 +157,9 @@ public class AppSettings
 
     // Furigana sidecar configuration
     public FuriganaSettings Furigana { get; set; } = new();
+
+    // Overlay (always-on-top, click-through) mode configuration
+    public OverlaySettings Overlay { get; set; } = new();
 
     // Last picked display index (for screen switch persistence)
     public int LastScreenIndex { get; set; } = -1;
