@@ -507,6 +507,75 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ═══════ Overlay Mode Settings ═══════ -->
+                <TextBlock Text="Overlay Mode" Style="{StaticResource SectionHeader}" Margin="0,8,0,12"/>
+
+                <Border Style="{StaticResource ProviderCard}">
+                    <StackPanel>
+                        <!-- Enable overlay -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0" x:Name="OverlayEnabledCheckBox"
+                                VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Grid.Column="1" Text="Always-on-top click-through overlay (work while translations float above)"
+                                Style="{StaticResource FieldLabel}" FontSize="12"/>
+                        </Grid>
+
+                        <!-- Toggle hotkey -->
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Toggle hotkey:" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Grid.Column="1" x:Name="OverlayToggleHotkeyTextBox"
+                                Style="{StaticResource SettingsTextBox}" Text="Ctrl+Alt+O" MaxLength="32"/>
+                        </Grid>
+
+                        <!-- Draw hotkey -->
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Draw region hotkey:" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Grid.Column="1" x:Name="OverlayDrawHotkeyTextBox"
+                                Style="{StaticResource SettingsTextBox}" Text="Ctrl+Alt+T" MaxLength="32"/>
+                        </Grid>
+
+                        <!-- Invalidate on input -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0" x:Name="OverlayInvalidateOnInputCheckBox"
+                                VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Grid.Column="1" Text="Hide the translation when scrolling/interaction changes the screen"
+                                Style="{StaticResource FieldLabel}" FontSize="12"/>
+                        </Grid>
+
+                        <!-- Change sensitivity -->
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Change sensitivity:" Style="{StaticResource FieldLabel}" VerticalAlignment="Center"/>
+                            <Slider Grid.Column="1" x:Name="OverlaySensitivitySlider"
+                                Minimum="0.01" Maximum="0.30" TickFrequency="0.01" IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center" Margin="8,0"
+                                ValueChanged="OverlaySensitivitySlider_ValueChanged"/>
+                            <TextBlock Grid.Column="2" x:Name="OverlaySensitivityValueText" Text="0.05"
+                                Style="{StaticResource FieldLabel}" VerticalAlignment="Center" MinWidth="36"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
 

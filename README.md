@@ -127,6 +127,27 @@ dotnet run --project WpfAppTest.csproj
   - **Furigana** — hiragana readings above kanji
   - **Original** — raw OCR text
 
+### Overlay Mode
+
+Overlay mode keeps the translation floating **on top of other apps** while you
+keep working in them:
+
+- **Toggle:** toolbar pin button, tray menu, or **Ctrl+Alt+O** (configurable).
+- **Draw region:** **Ctrl+Alt+T** (or the toolbar/tray), then drag as usual. The
+  translation card appears over the region.
+- **Click-through:** clicks, scrolls and typing pass through to the app below
+  everywhere *except* on the translation card itself (which can be selected,
+  copied via context menu, edited, and dragged by its handle).
+- **Screen-change invalidation:** as soon as scrolling or interaction changes
+  the content under the watched region, the translation fades out and a small
+  chip appears: *"Screen changed — Ctrl+Alt+T to redraw"*. Click the chip or
+  press the hotkey to draw a new area.
+- **Esc** dismisses the card/chip while overlay mode is on.
+
+Limitations: exclusive-fullscreen games do not render layered windows on top
+(use borderless windowed mode). A pixel-diff sensitivity slider and the
+"hide on screen change" toggle live in Settings → Overlay Mode.
+
 ## Project Structure
 
 - `MainWindow.xaml` / `.cs`: Main UI and logic.
@@ -135,6 +156,10 @@ dotnet run --project WpfAppTest.csproj
 - `DictionaryLookup.cs`: Japanese-English dictionary search.
 - `Controls/RubyTextBlock.cs`: Custom WPF control for hiragana ruby rendering.
 - `OverlayState.cs`: Per-region overlay state (translation, furigana, view mode).
+- `OverlayModeManager.cs`: Always-on-top / click-through / no-activate window styles.
+- `HotkeyManager.cs`: Global hotkeys (overlay toggle, draw region).
+- `LowLevelInputMonitor.cs`: System-wide mouse/keyboard hooks for overlay behavior.
+- `RegionChangeWatcher.cs`: Pixel-diff detection of watched-region changes.
 - `FuriganaServiceManager.cs`: Sidecar lifecycle, health checks, auto-degradation.
 - `Providers/Furigana/`: Furigana provider interfaces and HTTP client.
 - `furigana-service/`: Python FastAPI sidecar (SudachiPy + FLFL).

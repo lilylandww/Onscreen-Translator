@@ -57,9 +57,20 @@ public partial class SettingsWindow : Window
             FlflLatencyThresholdMs = settings.Furigana.FlflLatencyThresholdMs
         };
 
+        // Deep copy Overlay settings
+        _workingCopy.Overlay = new OverlaySettings
+        {
+            Enabled = settings.Overlay.Enabled,
+            ToggleHotkey = settings.Overlay.ToggleHotkey,
+            DrawHotkey = settings.Overlay.DrawHotkey,
+            InvalidateOnInput = settings.Overlay.InvalidateOnInput,
+            ChangeSensitivity = settings.Overlay.ChangeSensitivity
+        };
+
         InitializeOcrProviderComboBox();
         InitializeTranslationProviderComboBox();
         LoadFuriganaSettings();
+        LoadOverlaySettings();
 
         _initializing = false;
 
@@ -549,6 +560,7 @@ public partial class SettingsWindow : Window
         CollectOcrSettings();
         CollectTranslationSettings();
         CollectFuriganaSettings();
+        CollectOverlaySettings();
 
         // Copy working copy back to real settings
         _settings.OcrProvider = _workingCopy.OcrProvider;
@@ -570,6 +582,13 @@ public partial class SettingsWindow : Window
         _settings.Furigana.UseFlflFallback = _workingCopy.Furigana.UseFlflFallback;
         _settings.Furigana.FuriganaPort = _workingCopy.Furigana.FuriganaPort;
         _settings.Furigana.FlflLatencyThresholdMs = _workingCopy.Furigana.FlflLatencyThresholdMs;
+
+        // Copy Overlay settings back
+        _settings.Overlay.Enabled = _workingCopy.Overlay.Enabled;
+        _settings.Overlay.ToggleHotkey = _workingCopy.Overlay.ToggleHotkey;
+        _settings.Overlay.DrawHotkey = _workingCopy.Overlay.DrawHotkey;
+        _settings.Overlay.InvalidateOnInput = _workingCopy.Overlay.InvalidateOnInput;
+        _settings.Overlay.ChangeSensitivity = _workingCopy.Overlay.ChangeSensitivity;
 
         try
         {
@@ -850,6 +869,35 @@ public partial class SettingsWindow : Window
             FuriganaStatusText.Text = $"Error: {ex.Message}";
             FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
         }
+    }
+
+    #endregion
+
+    #region Overlay Settings
+
+    private void LoadOverlaySettings()
+    {
+        OverlayEnabledCheckBox.IsChecked = _workingCopy.Overlay.Enabled;
+        OverlayToggleHotkeyTextBox.Text = _workingCopy.Overlay.ToggleHotkey;
+        OverlayDrawHotkeyTextBox.Text = _workingCopy.Overlay.DrawHotkey;
+        OverlayInvalidateOnInputCheckBox.IsChecked = _workingCopy.Overlay.InvalidateOnInput;
+        OverlaySensitivitySlider.Value = _workingCopy.Overlay.ChangeSensitivity;
+        OverlaySensitivityValueText.Text = _workingCopy.Overlay.ChangeSensitivity.ToString("0.00");
+    }
+
+    private void CollectOverlaySettings()
+    {
+        _workingCopy.Overlay.Enabled = OverlayEnabledCheckBox.IsChecked == true;
+        _workingCopy.Overlay.ToggleHotkey = OverlayToggleHotkeyTextBox.Text.Trim();
+        _workingCopy.Overlay.DrawHotkey = OverlayDrawHotkeyTextBox.Text.Trim();
+        _workingCopy.Overlay.InvalidateOnInput = OverlayInvalidateOnInputCheckBox.IsChecked == true;
+        _workingCopy.Overlay.ChangeSensitivity = OverlaySensitivitySlider.Value;
+    }
+
+    private void OverlaySensitivitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (OverlaySensitivityValueText != null)
+            OverlaySensitivityValueText.Text = e.NewValue.ToString("0.00");
     }
 
     #endregion

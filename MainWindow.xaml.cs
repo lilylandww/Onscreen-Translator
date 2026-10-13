@@ -31,6 +31,24 @@ namespace WpfAppTest
         private bool captureModeEnabled = true;
         private bool _liveMode;
 
+        // ── Overlay mode (always-on-top, click-through, screen-change invalidation) ──
+        private bool _overlayMode;
+        private HotkeyManager? _hotkeyManager;
+        private OverlayModeManager? _overlayManager;
+        private LowLevelInputMonitor? _inputMonitor;
+        private RegionChangeWatcher? _regionWatcher;
+        private bool _drawArmed;
+        private bool _captureExcludesSelf;
+        private OverlayState? _redrawSnapshot;
+        private bool _chipVisibleBeforeArm;
+        private System.Drawing.Rectangle _lastCaptureRegion;
+        private float[]? _lastReferenceFrame;
+        private bool _isDraggingCard;
+        private System.Windows.Point _dragStartPoint;
+        private double _dragOrigOffsetX;
+        private double _dragOrigOffsetY;
+        private System.Windows.Threading.DispatcherTimer? _chipFadeTimer;
+
         private int currentScreenIndex = 0;
         private SystemTrayIcon? _systemTrayIcon;
         private WindowState _previousWindowState = WindowState.Maximized;
@@ -47,6 +65,12 @@ namespace WpfAppTest
         private CancellationTokenSource? _furiganaCts;
         private HttpFuriganaProvider? _furiganaProvider;
         private OllamaFuriganaFallbackProvider? _ollamaFallback;
+
+        /// <summary>
+        /// Overlay mode always captures live (the real desktop must stay visible
+        /// underneath); otherwise the user's Live Mode setting applies.
+        /// </summary>
+        private bool UseLiveCapture => _liveMode || _overlayMode;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -131,7 +155,19 @@ namespace WpfAppTest
             switch (key)
             {
                 case Key.Escape:
-                    MinimizeWindow();
+                    // In overlay mode Esc dismisses the overlay content first;
+                    // minimizing only happens when there is nothing to dismiss.
+                    if (_overlayMode && !isSelecting
+                        && (IsOverlayCardVisible() || RedrawChip.Visibility == Visibility.Visible || _drawArmed))
+                    {
+                        _drawArmed = false;
+                        DismissOverlayContent(clearState: true);
+                        UpdateOverlayPointerStateAtCursor();
+                    }
+                    else
+                    {
+                        MinimizeWindow();
+                    }
                     break;
                 default:
                     break;
@@ -178,6 +214,12 @@ namespace WpfAppTest
             _settings = AppSettings.Load();
             _liveMode = _settings.LiveMode;
             LiveModeToggleButton.IsChecked = _liveMode;
+
+            // Re-register overlay hotkeys and converge on the saved overlay state
+            _hotkeyManager?.Register(_settings.Overlay.ToggleHotkey, _settings.Overlay.DrawHotkey);
+            OverlayModeToggleButton.ToolTip = $"Overlay Mode ({_settings.Overlay.ToggleHotkey})";
+            if (_settings.Overlay.Enabled != _overlayMode)
+                SetOverlayMode(_settings.Overlay.Enabled);
 
             // Cancel any in-flight OCR before swapping providers
             _ocrCts?.Cancel();
@@ -233,14 +275,14 @@ namespace WpfAppTest
             else
             {
                 _previousWindowState = WindowState;
-                ShowInTaskbar = true;
+                ShowInTaskbar = !_overlayMode;
                 _systemTrayIcon?.Hide();
             }
         }
 
         private void RestoreFromTray()
         {
-            ShowInTaskbar = true;
+            ShowInTaskbar = !_overlayMode;
             WindowState = _previousWindowState;
             Show();
             Activate();
@@ -248,6 +290,7 @@ namespace WpfAppTest
 
         private void Canvas_MouseEnter(object sender, MouseEventArgs e)
         {
+            if (_overlayMode) return; // toolbar is not reachable while click-through
             TopButtonStack.Visibility = Visibility.Visible;
         }
 
@@ -327,13 +370,15 @@ namespace WpfAppTest
             bool isSmallArea = scaledRegion.Width < 5 && scaledRegion.Height < 5;
 
             Bitmap bmp;
-            if (_liveMode && !isSmallArea)
+            if (UseLiveCapture && !isSmallArea)
             {
                 // Hide chrome so it doesn't appear in the live capture
                 selectBorder.Visibility = Visibility.Hidden;
                 TopButtonStack.Visibility = Visibility.Collapsed;
-                translatedTextBlock.Visibility = Visibility.Collapsed;
-                rubyTextBlock.Visibility = Visibility.Collapsed;
+                translatedTextBlock.Visibility = Visibility.Hidden;
+                rubyTextBlock.Visibility = Visibility.Hidden;
+                CardDragHandle.Visibility = Visibility.Hidden;
+                RedrawChip.Visibility = Visibility.Hidden;
                 double savedOpacity = BackgroundBrush.Opacity;
                 BackgroundBrush.Opacity = 0;
 
@@ -358,6 +403,8 @@ namespace WpfAppTest
             if (isSmallArea)
             {
                 BackgroundBrush.Opacity = 0;
+                if (_overlayMode)
+                    CancelOverlayDraw();
                 return;
             }
             string outputFileName = $"./output/{timeStamp}.png";
@@ -372,6 +419,8 @@ namespace WpfAppTest
             _overlayState.X = xDimension;
             _overlayState.Y = yDimension;
             _overlayState.CurrentView = OverlayViewMode.Translation;
+            _overlayState.CardOffsetX = 0;
+            _overlayState.CardOffsetY = 0;
 
             // Reset toggle to translation view
             if (FuriganaToggleButton.IsChecked == true)
@@ -398,6 +447,9 @@ namespace WpfAppTest
             {
                 _overlayState.Translation = TranslatedText;
                 RenderOverlay();
+
+                if (_overlayMode)
+                    _ = OnOverlayTranslationReadyAsync(scaledRegion, bmp);
             }
         }
 
@@ -526,6 +578,7 @@ namespace WpfAppTest
                 // No region captured — hide both controls
                 translatedTextBlock.Visibility = Visibility.Collapsed;
                 rubyTextBlock.Visibility = Visibility.Collapsed;
+                CardDragHandle.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -547,6 +600,8 @@ namespace WpfAppTest
                     RenderTextView(_overlayState.Translation, region, x, y);
                     break;
             }
+
+            UpdateCardChrome();
         }
 
         /// <summary>
@@ -580,8 +635,8 @@ namespace WpfAppTest
                 translatedTextBlock.FontSize = CalculateOptimalFontSize(text, region.Width, region.Height);
             }
 
-            Canvas.SetLeft(translatedTextBlock, x);
-            Canvas.SetTop(translatedTextBlock, y);
+            Canvas.SetLeft(translatedTextBlock, x + _overlayState.CardOffsetX);
+            Canvas.SetTop(translatedTextBlock, y + _overlayState.CardOffsetY);
             translatedTextBlock.VerticalAlignment = VerticalAlignment.Center;
             translatedTextBlock.Visibility = Visibility.Visible;
             rubyTextBlock.Visibility = Visibility.Collapsed;
@@ -612,8 +667,8 @@ namespace WpfAppTest
             rubyTextBlock.Height = region.Height;
             rubyTextBlock.SetSegments(_overlayState.FuriganaSegments);
 
-            Canvas.SetLeft(rubyTextBlock, x);
-            Canvas.SetTop(rubyTextBlock, y);
+            Canvas.SetLeft(rubyTextBlock, x + _overlayState.CardOffsetX);
+            Canvas.SetTop(rubyTextBlock, y + _overlayState.CardOffsetY);
             rubyTextBlock.Visibility = Visibility.Visible;
             translatedTextBlock.Visibility = Visibility.Collapsed;
         }
@@ -1054,7 +1109,7 @@ namespace WpfAppTest
 
         private async void FreezeScreen()
         {
-            if (_liveMode)
+            if (UseLiveCapture)
             {
                 BG.Source = null;
                 BackgroundBrush.Opacity = 0.15;
@@ -1073,6 +1128,10 @@ namespace WpfAppTest
 
         private void Window_Deactivated(object sender, EventArgs e)
         {
+            // Overlay mode must survive focus changes: the user is intentionally
+            // working in another app while the translation stays on top.
+            if (_overlayMode) return;
+
             Unfreeze();
             // Clear overlay state and hide both controls
             _overlayState.OcrText = "";
@@ -1088,7 +1147,12 @@ namespace WpfAppTest
 
         private void Window_Activated(object sender, EventArgs e)
         {
-            if (_liveMode)
+            if (_overlayMode)
+            {
+                // Overlay never freezes the screen behind it.
+                Unfreeze();
+            }
+            else if (_liveMode)
             {
                 BG.Source = null;
                 BackgroundBrush.Opacity = 0.15;
@@ -1126,6 +1190,7 @@ namespace WpfAppTest
                 editTextBox.KeyDown -= EditTextBox_KeyDown;
             }
             CursorClipper.UnClipCursor();
+            DisposeOverlayInfrastructure();
             _ocrCts?.Cancel();
             _ocrCts?.Dispose();
             _ocrCts = null;
@@ -1161,7 +1226,7 @@ namespace WpfAppTest
             WindowState = WindowState.Maximized;
             FullWindow.Rect = new Rect(0, 0, Width, Height);
             KeyDown += HandleKeyDown;
-            if (!_liveMode) SetImageToBackground();
+            if (!UseLiveCapture) SetImageToBackground();
             else { BG.Source = null; BackgroundBrush.Opacity = 0.15; }
             SearchToggleButton.ToolTip = "Show Dictionary Search";
             // Phase 3: Re-enable furigana toggle for overlay view switching
@@ -1255,7 +1320,595 @@ namespace WpfAppTest
                     }
                 });
             }
+
+            InitializeOverlayInfrastructure();
         }
+
+        #region Overlay mode
+
+        private const int TrayIdToggleOverlay = 1003;
+        private const int TrayIdDrawRegion = 1004;
+
+        /// <summary>
+        /// Wires hotkeys, the topmost/click-through style manager, the system-wide
+        /// input monitor, and the screen-change watcher. Called once after load.
+        /// </summary>
+        private void InitializeOverlayInfrastructure()
+        {
+            _hotkeyManager = new HotkeyManager(this);
+            _hotkeyManager.HotkeyPressed += OnOverlayHotkeyPressed;
+            _hotkeyManager.Register(_settings.Overlay.ToggleHotkey, _settings.Overlay.DrawHotkey);
+
+            _overlayManager = new OverlayModeManager(this);
+
+            _inputMonitor = new LowLevelInputMonitor();
+            _inputMonitor.PointerMoved += OnOverlayPointerMoved;
+            _inputMonitor.PointerButton += OnOverlayPointerActivity;
+            _inputMonitor.Wheel += OnOverlayPointerActivity;
+            _inputMonitor.KeyDownActivity += OnOverlayKeyDownActivity;
+            _inputMonitor.Start();
+
+            _regionWatcher = new RegionChangeWatcher(Dispatcher);
+            _regionWatcher.CaptureRegionAsync = WatcherCaptureRegionAsync;
+            _regionWatcher.RegionChanged += OnOverlayRegionChanged;
+
+            OverlayModeToggleButton.ToolTip = $"Overlay Mode ({_settings.Overlay.ToggleHotkey})";
+            RedrawChipText.Text = $"Screen changed — {_settings.Overlay.DrawHotkey} to redraw";
+
+            if (_settings.Overlay.Enabled)
+                SetOverlayMode(true);
+        }
+
+        private void DisposeOverlayInfrastructure()
+        {
+            _hotkeyManager?.Dispose();
+            _hotkeyManager = null;
+            _inputMonitor?.Dispose();
+            _inputMonitor = null;
+            _regionWatcher?.Dispose();
+            _regionWatcher = null;
+            _overlayManager?.Dispose();
+            _overlayManager = null;
+        }
+
+        private void OnOverlayHotkeyPressed(int id)
+        {
+            if (id == HotkeyManager.ToggleOverlayId)
+            {
+                EnsureRestored();
+                SetOverlayMode(!_overlayMode);
+            }
+            else if (id == HotkeyManager.DrawRegionId)
+            {
+                EnsureRestored();
+                if (!_overlayMode)
+                    SetOverlayMode(true);
+                ArmOverlayDraw();
+            }
+        }
+
+        private void EnsureRestored()
+        {
+            if (WindowState == WindowState.Minimized)
+                RestoreFromTray();
+        }
+
+        private void OverlayModeToggleButton_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            SetOverlayMode(true);
+        }
+
+        private void OverlayModeToggleButton_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            SetOverlayMode(false);
+        }
+
+        /// <summary>
+        /// Turns overlay mode on/off. While on, the window is always-on-top,
+        /// click-through (except over the card/chip), non-activating, and never
+        /// freezes the screen behind it.
+        /// </summary>
+        private void SetOverlayMode(bool enable)
+        {
+            if (_overlayMode == enable) return;
+            _overlayMode = enable;
+
+            if (OverlayModeToggleButton.IsChecked != enable)
+            {
+                bool wasInitializing = _initializing;
+                _initializing = true;
+                OverlayModeToggleButton.IsChecked = enable;
+                _initializing = wasInitializing;
+            }
+
+            _settings.Overlay.Enabled = enable;
+            SaveSettings();
+
+            if (enable)
+            {
+                _overlayManager?.Enable();
+                // Overlay implies live capture: the real desktop stays visible.
+                Unfreeze();
+                TopButtonStack.Visibility = Visibility.Collapsed;
+                RedrawChipText.Text = $"Screen changed — {_settings.Overlay.DrawHotkey} to redraw";
+            }
+            else
+            {
+                _drawArmed = false;
+                _isDraggingCard = false;
+                DismissOverlayContent(clearState: true);
+                _overlayManager?.Disable();
+
+                // Return to the normal-mode visuals (only meaningful when active).
+                if (IsActive)
+                {
+                    if (_liveMode) { BG.Source = null; BackgroundBrush.Opacity = 0.15; }
+                    else FreezeScreen();
+                }
+                else
+                {
+                    Unfreeze();
+                }
+            }
+        }
+
+        /// <summary>Hides card/chip/handle and optionally clears overlay state.</summary>
+        private void DismissOverlayContent(bool clearState)
+        {
+            _regionWatcher?.Disarm();
+            _chipFadeTimer?.Stop();
+            _chipFadeTimer = null;
+
+            translatedTextBlock.BeginAnimation(UIElement.OpacityProperty, null);
+            rubyTextBlock.BeginAnimation(UIElement.OpacityProperty, null);
+            translatedTextBlock.Opacity = 1;
+            rubyTextBlock.Opacity = 1;
+            translatedTextBlock.Visibility = Visibility.Collapsed;
+            rubyTextBlock.Visibility = Visibility.Collapsed;
+            translatedTextBlock.Text = "";
+            CardDragHandle.Visibility = Visibility.Collapsed;
+            HideRedrawChip();
+            selectBorder.BorderThickness = new Thickness(0);
+
+            if (clearState)
+            {
+                _overlayState.OcrText = "";
+                _overlayState.Translation = "";
+                _overlayState.FuriganaSegments.Clear();
+                _overlayState.CurrentView = OverlayViewMode.Translation;
+                _overlayState.Region = null;
+                _overlayState.CardOffsetX = 0;
+                _overlayState.CardOffsetY = 0;
+                _redrawSnapshot = null;
+                _lastCaptureRegion = default;
+                _lastReferenceFrame = null;
+                OCRText = null;
+                TranslatedText = null;
+            }
+        }
+
+        /// <summary>
+        /// Called by the draw hotkey / chip / tray: makes the window interactive
+        /// and dims the screen so the user can drag a new translation region.
+        /// </summary>
+        private void ArmOverlayDraw()
+        {
+            if (!_overlayMode || isSelecting || isEditing) return;
+
+            // Snapshot the current card so a click-without-drag restores it.
+            _redrawSnapshot = IsOverlayCardVisible() ? _overlayState.Clone() : null;
+            _chipVisibleBeforeArm = RedrawChip.Visibility == Visibility.Visible;
+
+            _drawArmed = true;
+            _regionWatcher?.Disarm();
+
+            // The whole window must receive the selection drag.
+            _overlayManager?.SetClickThrough(false);
+            _overlayManager?.SetNoActivate(false);
+
+            captureModeEnabled = true;
+            vancas.Cursor = Cursors.Cross;
+            BG.Source = null;
+            BackgroundBrush.Opacity = 0.25;
+            RedrawChip.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// A selection that was really a click (area &lt; 5px): restore the
+        /// previous card or the redraw chip instead of losing the overlay.
+        /// </summary>
+        private void CancelOverlayDraw()
+        {
+            _drawArmed = false;
+
+            if (_redrawSnapshot != null)
+            {
+                _overlayState.OcrText = _redrawSnapshot.OcrText;
+                _overlayState.Translation = _redrawSnapshot.Translation;
+                _overlayState.FuriganaSegments = new List<Providers.Furigana.FuriganaSegment>(_redrawSnapshot.FuriganaSegments);
+                _overlayState.CurrentView = _redrawSnapshot.CurrentView;
+                _overlayState.Region = _redrawSnapshot.Region;
+                _overlayState.X = _redrawSnapshot.X;
+                _overlayState.Y = _redrawSnapshot.Y;
+                _overlayState.CardOffsetX = _redrawSnapshot.CardOffsetX;
+                _overlayState.CardOffsetY = _redrawSnapshot.CardOffsetY;
+                _redrawSnapshot = null;
+                RenderOverlay();
+                RestartOverlayWatch();
+            }
+            else
+            {
+                translatedTextBlock.Visibility = Visibility.Collapsed;
+                rubyTextBlock.Visibility = Visibility.Collapsed;
+                CardDragHandle.Visibility = Visibility.Collapsed;
+                if (_chipVisibleBeforeArm)
+                    ShowRedrawChip();
+            }
+            _chipVisibleBeforeArm = false;
+
+            UpdateOverlayPointerStateAtCursor();
+        }
+
+        /// <summary>Re-arms the watcher with the stored reference frame (after a cancelled draw).</summary>
+        private void RestartOverlayWatch()
+        {
+            if (_lastReferenceFrame == null || _overlayState.Region == null) return;
+            if (!_settings.Overlay.InvalidateOnInput) return;
+
+            _regionWatcher?.Arm(
+                _lastCaptureRegion,
+                _lastReferenceFrame,
+                _settings.Overlay.ChangeSensitivity,
+                enablePoll: _captureExcludesSelf);
+        }
+
+        /// <summary>
+        /// Runs after a successful overlay-mode capture: shows the card, measures
+        /// whether GDI capture can see through our own overlay (calibration), and
+        /// arms the screen-change watcher.
+        /// </summary>
+        private async Task OnOverlayTranslationReadyAsync(System.Drawing.Rectangle region, System.Drawing.Bitmap bmp)
+        {
+            _drawArmed = false;
+            _redrawSnapshot = null;
+            _chipVisibleBeforeArm = false;
+            HideRedrawChip();
+            BackgroundBrush.Opacity = 0;
+
+            if (!IsOverlayCardVisible())
+            {
+                bmp.Dispose();
+                UpdateOverlayPointerStateAtCursor();
+                return;
+            }
+
+            try
+            {
+                // Let the card present on screen before calibrating.
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                await Task.Delay(150);
+
+                _lastCaptureRegion = region;
+                _lastReferenceFrame = RegionChangeWatcher.Downsample(bmp);
+
+                // Calibration: capture the region again while the card is visible.
+                // If the frames match, WDA_EXCLUDEFROMCAPTURE works with GDI and
+                // checks can run without hiding the card; otherwise checks hide
+                // the chrome briefly (input-triggered only, no polling).
+                using (System.Drawing.Bitmap? check = ImageMethods.GetRegionOfScreenAsBitmap(region))
+                {
+                    float[] checkFrame = RegionChangeWatcher.Downsample(check);
+                    double matchThreshold = Math.Max(0.01, _settings.Overlay.ChangeSensitivity * 0.5);
+                    _captureExcludesSelf =
+                        RegionChangeWatcher.MeanAbsDiff(_lastReferenceFrame, checkFrame) < matchThreshold;
+                }
+
+                if (_settings.Overlay.InvalidateOnInput)
+                {
+                    _regionWatcher?.Arm(
+                        region,
+                        _lastReferenceFrame,
+                        _settings.Overlay.ChangeSensitivity,
+                        enablePoll: _captureExcludesSelf);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Post-capture setup failed: {ex.Message}");
+            }
+            finally
+            {
+                bmp.Dispose();
+                UpdateOverlayPointerStateAtCursor();
+            }
+        }
+
+        /// <summary>Capture callback for the watcher (calibrated hide-when-needed path).</summary>
+        private Task<System.Drawing.Bitmap?> WatcherCaptureRegionAsync(System.Drawing.Rectangle region)
+        {
+            if (_captureExcludesSelf)
+                return Task.FromResult<System.Drawing.Bitmap?>(ImageMethods.GetRegionOfScreenAsBitmap(region));
+            return HideChromeCaptureAsync(region);
+        }
+
+        private async Task<System.Drawing.Bitmap?> HideChromeCaptureAsync(System.Drawing.Rectangle region)
+        {
+            bool cardWasVisible = translatedTextBlock.Visibility == Visibility.Visible;
+            bool rubyWasVisible = rubyTextBlock.Visibility == Visibility.Visible;
+            bool chipWasVisible = RedrawChip.Visibility == Visibility.Visible;
+            bool handleWasVisible = CardDragHandle.Visibility == Visibility.Visible;
+
+            translatedTextBlock.Visibility = Visibility.Hidden;
+            rubyTextBlock.Visibility = Visibility.Hidden;
+            RedrawChip.Visibility = Visibility.Hidden;
+            CardDragHandle.Visibility = Visibility.Hidden;
+
+            try
+            {
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                await Task.Delay(60);
+                return ImageMethods.GetRegionOfScreenAsBitmap(region);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Watcher capture failed: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                if (cardWasVisible) translatedTextBlock.Visibility = Visibility.Visible;
+                if (rubyWasVisible) rubyTextBlock.Visibility = Visibility.Visible;
+                if (chipWasVisible) RedrawChip.Visibility = Visibility.Visible;
+                if (handleWasVisible) CardDragHandle.Visibility = Visibility.Visible;
+            }
+        }
+
+        /// <summary>The watched region changed: fade the card out and show the redraw chip.</summary>
+        private void OnOverlayRegionChanged()
+        {
+            if (!_overlayMode) return;
+
+            _chipFadeTimer?.Stop();
+
+            var fadeTargets = new List<UIElement>();
+            if (translatedTextBlock.Visibility == Visibility.Visible) fadeTargets.Add(translatedTextBlock);
+            if (rubyTextBlock.Visibility == Visibility.Visible) fadeTargets.Add(rubyTextBlock);
+
+            if (fadeTargets.Count > 0)
+            {
+                foreach (var element in fadeTargets)
+                {
+                    var fade = new System.Windows.Media.Animation.DoubleAnimation(
+                        1, 0, TimeSpan.FromMilliseconds(200));
+                    element.BeginAnimation(UIElement.OpacityProperty, fade);
+                }
+
+                // One-shot finalize after the fade completes.
+                _chipFadeTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(220)
+                };
+                _chipFadeTimer.Tick += (_, _) =>
+                {
+                    _chipFadeTimer?.Stop();
+                    _chipFadeTimer = null;
+                    foreach (var element in fadeTargets)
+                        element.Visibility = Visibility.Collapsed;
+                    translatedTextBlock.Opacity = 1;
+                    rubyTextBlock.Opacity = 1;
+                    CardDragHandle.Visibility = Visibility.Collapsed;
+                    ShowRedrawChip();
+                    UpdateOverlayPointerStateAtCursor();
+                };
+                _chipFadeTimer.Start();
+            }
+            else
+            {
+                ShowRedrawChip();
+                UpdateOverlayPointerStateAtCursor();
+            }
+        }
+
+        private void ShowRedrawChip()
+        {
+            if (!_overlayMode || _overlayState.Region is not { } region) return;
+
+            RedrawChipText.Text = $"Screen changed — {_settings.Overlay.DrawHotkey} to redraw";
+            RedrawChip.BeginAnimation(UIElement.OpacityProperty, null);
+            RedrawChip.Opacity = 0;
+            RedrawChip.Visibility = Visibility.Visible;
+            RedrawChip.UpdateLayout();
+
+            // Anchor at the top-right inside the watched region (physical px → DIP).
+            Matrix m = PresentationSource.FromVisual(this).CompositionTarget.TransformToDevice;
+            System.Windows.Point windowPos = this.GetAbsolutePosition();
+            double leftDip = (region.Right - windowPos.X) / m.M11 - RedrawChip.ActualWidth - 4;
+            double topDip = (region.Top - windowPos.Y) / m.M22 + 4;
+            Canvas.SetLeft(RedrawChip, Math.Max(4, leftDip));
+            Canvas.SetTop(RedrawChip, Math.Max(4, topDip));
+
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120));
+            RedrawChip.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
+
+        private void HideRedrawChip()
+        {
+            RedrawChip.BeginAnimation(UIElement.OpacityProperty, null);
+            RedrawChip.Opacity = 1;
+            RedrawChip.Visibility = Visibility.Collapsed;
+        }
+
+        private void RedrawChip_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            // Close button (or its glyph) handles itself; everything else on the
+            // chip starts a redraw.
+            if (IsInsideButton(e.OriginalSource)) return;
+            HideRedrawChip();
+            ArmOverlayDraw();
+            e.Handled = true;
+        }
+
+        private static bool IsInsideButton(object? source)
+        {
+            DependencyObject? current = source as DependencyObject;
+            while (current != null)
+            {
+                if (current is Button) return true;
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return false;
+        }
+
+        private void RedrawChipCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            HideRedrawChip();
+        }
+
+        #endregion
+
+        #region Overlay card chrome (drag handle + pointer-driven click-through)
+
+        private bool IsOverlayCardVisible() =>
+            _overlayMode &&
+            ((translatedTextBlock.Visibility == Visibility.Visible && translatedTextBlock.Text.Length > 0)
+             || rubyTextBlock.Visibility == Visibility.Visible);
+
+        /// <summary>Shows/positions the drag handle next to the visible card.</summary>
+        private void UpdateCardChrome()
+        {
+            if (!_overlayMode || !IsOverlayCardVisible())
+            {
+                CardDragHandle.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            FrameworkElement block = rubyTextBlock.Visibility == Visibility.Visible
+                ? rubyTextBlock
+                : translatedTextBlock;
+
+            double left = Canvas.GetLeft(block);
+            double top = Canvas.GetTop(block);
+            if (double.IsNaN(left)) left = 0;
+            if (double.IsNaN(top)) top = 0;
+
+            Canvas.SetLeft(CardDragHandle, left - 22);
+            Canvas.SetTop(CardDragHandle, top + 2);
+            CardDragHandle.Visibility = Visibility.Visible;
+        }
+
+        private void CardDragHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!_overlayMode || !IsOverlayCardVisible()) return;
+
+            _isDraggingCard = true;
+            _dragStartPoint = e.GetPosition(vancas);
+            _dragOrigOffsetX = _overlayState.CardOffsetX;
+            _dragOrigOffsetY = _overlayState.CardOffsetY;
+            _regionWatcher?.Suspend();
+            CardDragHandle.CaptureMouse();
+            e.Handled = true;
+        }
+
+        private void CardDragHandle_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isDraggingCard) return;
+
+            System.Windows.Point p = e.GetPosition(vancas);
+            _overlayState.CardOffsetX = _dragOrigOffsetX + (p.X - _dragStartPoint.X);
+            _overlayState.CardOffsetY = _dragOrigOffsetY + (p.Y - _dragStartPoint.Y);
+            RenderOverlay();
+            e.Handled = true;
+        }
+
+        private void CardDragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isDraggingCard) return;
+
+            _isDraggingCard = false;
+            CardDragHandle.ReleaseMouseCapture();
+            _regionWatcher?.Resume();
+            UpdateOverlayPointerStateAtCursor();
+            e.Handled = true;
+        }
+
+        private void UpdateOverlayPointerStateAtCursor()
+        {
+            if (ApplicationUtilities.GetMousePosition(out System.Windows.Point pt))
+                UpdateOverlayPointerState(pt);
+        }
+
+        /// <summary>
+        /// Toggles click-through/no-activate based on whether the pointer is
+        /// over an interactive overlay element (card, drag handle, chip).
+        /// </summary>
+        private void UpdateOverlayPointerState(System.Windows.Point screenPt)
+        {
+            if (!_overlayMode || _overlayManager == null) return;
+
+            if (isSelecting || _drawArmed || _isDraggingCard || isEditing)
+            {
+                _overlayManager.SetClickThrough(false);
+                _overlayManager.SetNoActivate(false);
+                return;
+            }
+
+            bool interactive = IsOverlayInteractiveAt(screenPt);
+            _overlayManager.SetClickThrough(!interactive);
+            _overlayManager.SetNoActivate(!interactive);
+        }
+
+        private bool IsOverlayInteractiveAt(System.Windows.Point screenPt)
+        {
+            if (IsOverlayCardVisible())
+            {
+                FrameworkElement block = rubyTextBlock.Visibility == Visibility.Visible
+                    ? rubyTextBlock
+                    : translatedTextBlock;
+                if (ContainsScreenRect(block, screenPt)) return true;
+            }
+            if (RedrawChip.Visibility == Visibility.Visible && ContainsScreenRect(RedrawChip, screenPt)) return true;
+            if (CardDragHandle.Visibility == Visibility.Visible && ContainsScreenRect(CardDragHandle, screenPt)) return true;
+            return false;
+        }
+
+        /// <summary>Hit-test an element against a physical screen point (LL-hook coords).</summary>
+        private static bool ContainsScreenRect(FrameworkElement el, System.Windows.Point screenPt)
+        {
+            if (el.ActualWidth <= 0 || el.ActualHeight <= 0) return false;
+            System.Windows.Point topLeft = el.PointToScreen(new System.Windows.Point(0, 0));
+            DpiScale dpi = VisualTreeHelper.GetDpi(el);
+            double w = el.ActualWidth * dpi.DpiScaleX;
+            double h = el.ActualHeight * dpi.DpiScaleY;
+            return screenPt.X >= topLeft.X && screenPt.X <= topLeft.X + w
+                && screenPt.Y >= topLeft.Y && screenPt.Y <= topLeft.Y + h;
+        }
+
+        private void OnOverlayPointerMoved(System.Drawing.Point pt)
+        {
+            UpdateOverlayPointerState(new System.Windows.Point(pt.X, pt.Y));
+        }
+
+        private void OnOverlayPointerActivity(System.Drawing.Point pt)
+        {
+            if (!_overlayMode || _regionWatcher?.IsArmed != true) return;
+            if (isSelecting || _drawArmed || _isDraggingCard || isEditing) return;
+
+            var screenPt = new System.Windows.Point(pt.X, pt.Y);
+            if (IsOverlayInteractiveAt(screenPt)) return; // own UI must not invalidate
+
+            _regionWatcher.NotifyInput();
+        }
+
+        private void OnOverlayKeyDownActivity()
+        {
+            if (!_overlayMode || _regionWatcher?.IsArmed != true) return;
+            if (IsActive || isSelecting || isEditing) return;
+            _regionWatcher.NotifyInput();
+        }
+
+        #endregion
 
         private void InitializeTranslationProviderComboBox()
         {
@@ -1397,6 +2050,17 @@ namespace WpfAppTest
         {
             try
             {
+                var trayExtras = new List<TrayMenuItem>
+                {
+                    new(TrayIdToggleOverlay, "Toggle Overlay Mode", () => SetOverlayMode(!_overlayMode)),
+                    new(TrayIdDrawRegion, "Draw Translation Region", () =>
+                    {
+                        EnsureRestored();
+                        if (!_overlayMode) SetOverlayMode(true);
+                        ArmOverlayDraw();
+                    })
+                };
+
                 var iconStream = Application.GetResourceStream(new Uri("pack://application:,,,/Resources/icon.ico"))?.Stream;
                 if (iconStream == null)
                 {
@@ -1411,12 +2075,12 @@ namespace WpfAppTest
                     {
                         throw new InvalidOperationException("Could not extract default icon");
                     }
-                    _systemTrayIcon = new SystemTrayIcon(defaultIcon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit);
+                    _systemTrayIcon = new SystemTrayIcon(defaultIcon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit, trayExtras);
                 }
                 else
                 {
                     using var icon = new System.Drawing.Icon(iconStream);
-                    _systemTrayIcon = new SystemTrayIcon(icon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit);
+                    _systemTrayIcon = new SystemTrayIcon(icon, "J2E OCR Translator", RestoreFromTray, OpenSettings, Quit, trayExtras);
                 }
 
                 _systemTrayIcon.OnIconClicked += (s, e) =>
@@ -1442,6 +2106,7 @@ namespace WpfAppTest
             BG.Source = null;
             BG.UpdateLayout();
             CurrentScreen = null;
+            DisposeOverlayInfrastructure();
             StateChanged -= Window_StateChanged;
             Loaded -= Window_Loaded;
             Unloaded -= Window_Unloaded;
@@ -1637,6 +2302,10 @@ namespace WpfAppTest
         {
             Rect bounds = screen.ScaledBounds();
 
+            // Region/card coordinates are monitor-relative — drop overlay content.
+            if (_overlayMode)
+                DismissOverlayContent(clearState: true);
+
             // Drop the previous monitor's frozen screenshot immediately so it
             // can't bleed through during the (asynchronous) window relocation.
             BackgroundBrush.Opacity = 0;
@@ -1657,7 +2326,7 @@ namespace WpfAppTest
             // *previous* monitor and we snapshotted its content. Wait until the
             // window really reports it is on the target monitor before capturing.
             await WaitForWindowOnScreenAsync(bounds);
-            if (!_liveMode) SetImageToBackground();
+            if (!UseLiveCapture) SetImageToBackground();
             else { BG.Source = null; BackgroundBrush.Opacity = 0.15; }
         }
 

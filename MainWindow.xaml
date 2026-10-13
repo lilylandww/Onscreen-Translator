@@ -136,6 +136,74 @@
                 PreviewKeyDown="Overlay_PreviewKeyDown"
                 ContextMenu="{StaticResource OverlayContextMenu}"
                 BaseFontSize="16" />
+            <!-- Overlay-mode drag handle for repositioning the translation card -->
+            <Border
+                x:Name="CardDragHandle"
+                Width="18"
+                Height="18"
+                Visibility="Collapsed"
+                Cursor="SizeAll"
+                CornerRadius="4"
+                Background="#CC2C2C2C"
+                MouseLeftButtonDown="CardDragHandle_MouseLeftButtonDown"
+                MouseMove="CardDragHandle_MouseMove"
+                MouseLeftButtonUp="CardDragHandle_MouseLeftButtonUp"
+                ToolTip="Drag translation">
+                <TextBlock
+                    Text="&#xE784;"
+                    FontFamily="Segoe MDL2 Assets"
+                    FontSize="10"
+                    Foreground="White"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center" />
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="8" Direction="-90" Opacity="0.6" />
+                </Border.Effect>
+            </Border>
+            <!-- Overlay-mode "screen changed" chip: appears when the watched
+                 region changes and the translation is dismissed -->
+            <Border
+                x:Name="RedrawChip"
+                Visibility="Collapsed"
+                Cursor="Hand"
+                Padding="8,4"
+                CornerRadius="6"
+                Background="#E6424242"
+                MouseLeftButtonDown="RedrawChip_MouseLeftButtonDown"
+                ToolTip="Click to redraw the translation area">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="12" Direction="-90" Opacity="0.7" />
+                </Border.Effect>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock
+                        x:Name="RedrawChipText"
+                        Text="Screen changed — Ctrl+Alt+T to redraw"
+                        FontSize="11"
+                        Foreground="White"
+                        VerticalAlignment="Center"
+                        Margin="0,0,6,0" />
+                    <Button
+                        x:Name="RedrawChipCloseButton"
+                        Width="16"
+                        Height="16"
+                        Padding="0"
+                        Margin="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        VerticalAlignment="Center"
+                        Click="RedrawChipCloseButton_Click"
+                        ToolTip="Dismiss">
+                        <TextBlock
+                            Text="&#xE711;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="10"
+                            Foreground="White"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+                    </Button>
+                </StackPanel>
+            </Border>
             <Button
                 x:Name="FinishEditButton"
                 Visibility="Collapsed"
@@ -269,6 +337,13 @@
                     Unchecked="LiveModeToggleButton_Unchecked"
                     ToolTip="Live Mode (no screen freeze)">
                     <wpfui:SymbolIcon Symbol="Eye24" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+                </ToggleButton>
+                <ToggleButton
+                    x:Name="OverlayModeToggleButton"
+                    Checked="OverlayModeToggleButton_Checked"
+                    Unchecked="OverlayModeToggleButton_Unchecked"
+                    ToolTip="Overlay Mode (Ctrl+Alt+O): always on top, click-through">
+                    <TextBlock Text="&#xE718;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center" />
                 </ToggleButton>
                 <Button
                     x:Name="ScreenSwitchButton"
