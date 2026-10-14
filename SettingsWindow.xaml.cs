@@ -57,9 +57,18 @@ public partial class SettingsWindow : Window
             FlflLatencyThresholdMs = settings.Furigana.FlflLatencyThresholdMs
         };
 
+        // Deep copy Breakdown settings
+        _workingCopy.Breakdown = new BreakdownSettings
+        {
+            Enabled = settings.Breakdown.Enabled,
+            Provider = settings.Breakdown.Provider,
+            Model = settings.Breakdown.Model
+        };
+
         InitializeOcrProviderComboBox();
         InitializeTranslationProviderComboBox();
         LoadFuriganaSettings();
+        LoadBreakdownSettings();
 
         _initializing = false;
 
@@ -549,6 +558,7 @@ public partial class SettingsWindow : Window
         CollectOcrSettings();
         CollectTranslationSettings();
         CollectFuriganaSettings();
+        CollectBreakdownSettings();
 
         // Copy working copy back to real settings
         _settings.OcrProvider = _workingCopy.OcrProvider;
@@ -570,6 +580,11 @@ public partial class SettingsWindow : Window
         _settings.Furigana.UseFlflFallback = _workingCopy.Furigana.UseFlflFallback;
         _settings.Furigana.FuriganaPort = _workingCopy.Furigana.FuriganaPort;
         _settings.Furigana.FlflLatencyThresholdMs = _workingCopy.Furigana.FlflLatencyThresholdMs;
+
+        // Copy Breakdown settings back
+        _settings.Breakdown.Enabled = _workingCopy.Breakdown.Enabled;
+        _settings.Breakdown.Provider = _workingCopy.Breakdown.Provider;
+        _settings.Breakdown.Model = _workingCopy.Breakdown.Model;
 
         try
         {
@@ -850,6 +865,72 @@ public partial class SettingsWindow : Window
             FuriganaStatusText.Text = $"Error: {ex.Message}";
             FuriganaStatusText.Foreground = new SolidColorBrush(Color.FromRgb(244, 67, 54));
         }
+    }
+
+    #endregion
+
+    #region Breakdown Settings
+
+    private void LoadBreakdownSettings()
+    {
+        BreakdownProviderComboBox.Items.Clear();
+        foreach (var name in ProviderFactory.AvailableBreakdownProviders)
+        {
+            var display = ProviderFactory.BreakdownProviderDisplayNames.GetValueOrDefault(name, name);
+            BreakdownProviderComboBox.Items.Add(display);
+        }
+
+        int idx = Array.IndexOf(ProviderFactory.AvailableBreakdownProviders, _workingCopy.Breakdown.Provider);
+        BreakdownProviderComboBox.SelectedIndex = idx >= 0 ? idx : 0;
+
+        BreakdownEnabledCheckBox.IsChecked = _workingCopy.Breakdown.Enabled;
+        BreakdownModelComboBox.Text = _workingCopy.Breakdown.Model;
+        _ = LoadBreakdownModelsForComboBoxAsync();
+    }
+
+    private void BreakdownProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        int idx = BreakdownProviderComboBox.SelectedIndex;
+        if (idx >= 0 && idx < ProviderFactory.AvailableBreakdownProviders.Length)
+        {
+            _workingCopy.Breakdown.Provider = ProviderFactory.AvailableBreakdownProviders[idx];
+            BreakdownModelComboBox.Text = _workingCopy.Breakdown.Model;
+            _ = LoadBreakdownModelsForComboBoxAsync();
+        }
+    }
+
+    private void RefreshBreakdownModels_Click(object sender, RoutedEventArgs e)
+    {
+        CollectBreakdownSettings();
+        _ = LoadBreakdownModelsForComboBoxAsync();
+    }
+
+    /// <summary>
+    /// Reads current Breakdown UI values into the working copy.
+    /// </summary>
+    private void CollectBreakdownSettings()
+    {
+        _workingCopy.Breakdown.Enabled = BreakdownEnabledCheckBox.IsChecked == true;
+        _workingCopy.Breakdown.Model = BreakdownModelComboBox.Text.Trim();
+
+        int idx = BreakdownProviderComboBox.SelectedIndex;
+        if (idx >= 0 && idx < ProviderFactory.AvailableBreakdownProviders.Length)
+            _workingCopy.Breakdown.Provider = ProviderFactory.AvailableBreakdownProviders[idx];
+    }
+
+    /// <summary>
+    /// Loads the model list for the current breakdown provider. Model listing
+    /// reuses the translation-model loader — same three LLM endpoints.
+    /// </summary>
+    private async Task LoadBreakdownModelsForComboBoxAsync()
+    {
+        var providerName = _workingCopy.Breakdown.Provider;
+        if (providerName is not ("ollama" or "openai" or "openai-compatible"))
+            return;
+
+        await LoadTranslationModelsForComboBoxAsync(
+            BreakdownModelComboBox, providerName, BreakdownModelComboBox.Text);
     }
 
     #endregion

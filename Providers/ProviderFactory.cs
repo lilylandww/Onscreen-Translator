@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using WpfAppTest.Providers.Breakdown;
 
 namespace WpfAppTest.Providers;
 
@@ -22,6 +23,12 @@ public static class ProviderFactory
     public static readonly string[] AvailableTranslationProviders = ["google", "deepl", "ollama", "openai", "openai-compatible"];
 
     /// <summary>
+    /// Providers able to run the sentence-breakdown LLM call (LLM endpoints only —
+    /// Google/DeepL cannot produce structured breakdowns).
+    /// </summary>
+    public static readonly string[] AvailableBreakdownProviders = ["ollama", "openai", "openai-compatible"];
+
+    /// <summary>
     /// Display names for OCR providers.
     /// </summary>
     public static readonly Dictionary<string, string> OcrProviderDisplayNames = new()
@@ -38,6 +45,16 @@ public static class ProviderFactory
     {
         ["google"] = "Google Translate",
         ["deepl"] = "DeepL",
+        ["ollama"] = "Ollama (Local)",
+        ["openai"] = "OpenAI",
+        ["openai-compatible"] = "OpenAI-Compatible"
+    };
+
+    /// <summary>
+    /// Display names for breakdown providers.
+    /// </summary>
+    public static readonly Dictionary<string, string> BreakdownProviderDisplayNames = new()
+    {
         ["ollama"] = "Ollama (Local)",
         ["openai"] = "OpenAI",
         ["openai-compatible"] = "OpenAI-Compatible"
@@ -159,6 +176,27 @@ public static class ProviderFactory
             },
             _ => throw new ArgumentException($"Unknown translation provider: {providerName}", nameof(providerName))
         };
+    }
+
+    /// <summary>
+    /// Creates the sentence-breakdown provider from settings.
+    /// Uses <c>Breakdown.Model</c>, falling back to the chosen provider's
+    /// translation model when it is empty.
+    /// </summary>
+    public static ISentenceBreakdownProvider CreateBreakdownProvider(AppSettings settings)
+    {
+        var breakdown = settings.Breakdown;
+        var providerName = breakdown.Provider;
+        if (Array.IndexOf(AvailableBreakdownProviders, providerName) < 0)
+            providerName = "ollama";
+
+        var config = settings.GetProviderConfig(providerName);
+        var model = string.IsNullOrEmpty(breakdown.Model) ? config.TranslationModel : breakdown.Model;
+        var baseUrl = string.IsNullOrEmpty(config.BaseUrl) && providerName == "openai"
+            ? "https://api.openai.com/v1"
+            : config.BaseUrl;
+
+        return new LLMSentenceBreakdownProvider(baseUrl, config.ApiKey, model);
     }
 
     /// <summary>

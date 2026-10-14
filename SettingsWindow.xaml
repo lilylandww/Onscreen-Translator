@@ -507,6 +507,60 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ═══════ Sentence Breakdown Settings ═══════ -->
+                <TextBlock Text="Sentence Breakdown Settings" Style="{StaticResource SectionHeader}" Margin="0,8,0,12"/>
+
+                <Border Style="{StaticResource ProviderCard}">
+                    <StackPanel>
+                        <!-- Enable Breakdown -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0" x:Name="BreakdownEnabledCheckBox"
+                                VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Grid.Column="1" Text="Enable hoverable vocabulary &amp; grammar breakdown"
+                                Style="{StaticResource FieldLabel}" FontSize="12"/>
+                        </Grid>
+
+                        <!-- LLM Provider -->
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="LLM Provider:" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Column="1" x:Name="BreakdownProviderComboBox"
+                                Style="{StaticResource SettingsComboBox}"
+                                SelectionChanged="BreakdownProviderComboBox_SelectionChanged"/>
+                        </Grid>
+
+                        <!-- Model -->
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Column="1" x:Name="BreakdownModelComboBox"
+                                Style="{StaticResource SettingsComboBox}"
+                                IsEditable="True"/>
+                            <Button Grid.Column="2" x:Name="RefreshBreakdownModelsButton"
+                                Style="{StaticResource SmallButton}" Margin="6,0,0,0"
+                                Click="RefreshBreakdownModels_Click" ToolTip="Refresh models">
+                                <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
+                            </Button>
+                        </Grid>
+
+                        <TextBlock
+                            Text="Leave model empty to reuse the translation model. The recognized sentence is sent to this LLM after each capture."
+                            FontSize="11" TextWrapping="Wrap"
+                            Foreground="{wpfui:ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
 

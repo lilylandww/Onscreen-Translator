@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Drawing;
+using WpfAppTest.Providers.Breakdown;
 using WpfAppTest.Providers.Furigana;
 
 namespace WpfAppTest;
@@ -11,6 +12,7 @@ public enum OverlayViewMode
 {
     Translation,
     Furigana,
+    Breakdown,
     Original
 }
 
@@ -29,6 +31,9 @@ public class OverlayState
 
     /// <summary>Furigana segments for the current region.</summary>
     public List<FuriganaSegment> FuriganaSegments { get; set; } = new();
+
+    /// <summary>Vocab + grammar parts for the current region (Breakdown view).</summary>
+    public List<BreakdownPart> BreakdownParts { get; set; } = new();
 
     /// <summary>The currently active view mode.</summary>
     public OverlayViewMode CurrentView { get; set; } = OverlayViewMode.Translation;

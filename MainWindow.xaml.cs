@@ -7,6 +7,7 @@ using System.Windows.Input;
 using WpfAppTest.Utilities;
 using WpfAppTest.Extensions;
 using WpfAppTest.Providers;
+using WpfAppTest.Providers.Breakdown;
 using WpfAppTest.Providers.Furigana;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -47,6 +48,8 @@ namespace WpfAppTest
         private CancellationTokenSource? _furiganaCts;
         private HttpFuriganaProvider? _furiganaProvider;
         private OllamaFuriganaFallbackProvider? _ollamaFallback;
+        private CancellationTokenSource? _breakdownCts;
+        private ISentenceBreakdownProvider? _breakdownProvider;
 
         private async Task<string> GetTranslatedTextAsync(string text)
         {
@@ -191,6 +194,11 @@ namespace WpfAppTest
             _furiganaProvider = null;
             _ollamaFallback?.Dispose();
             _ollamaFallback = null;
+            _breakdownCts?.Cancel();
+            _breakdownCts?.Dispose();
+            _breakdownCts = null;
+            (_breakdownProvider as IDisposable)?.Dispose();
+            _breakdownProvider = null;
 
             // Dispose old providers
             if (_currentOcrProvider is IDisposable ocrDisposable)
@@ -390,6 +398,20 @@ namespace WpfAppTest
                 Debug.WriteLine("[Furigana] Disabled in settings — skipping furigana fetch.");
             }
 
+            // Kick off sentence-breakdown fetch in parallel with translation (non-blocking)
+            _overlayState.BreakdownParts.Clear();
+            if (_settings.Breakdown.Enabled)
+            {
+                _breakdownCts?.Cancel();
+                _breakdownCts?.Dispose();
+                _breakdownCts = new CancellationTokenSource();
+                _ = FetchBreakdownAsync(text, _breakdownCts.Token);
+            }
+            else
+            {
+                Debug.WriteLine("[Breakdown] Disabled in settings — skipping breakdown fetch.");
+            }
+
             // Fetch translation
             TranslatedText = await GetTranslatedTextAsync(OCRText);
             Console.WriteLine(TranslatedText);
@@ -538,6 +560,10 @@ namespace WpfAppTest
                     RenderFuriganaView(region, x, y);
                     break;
 
+                case OverlayViewMode.Breakdown:
+                    RenderBreakdownView(region, x, y);
+                    break;
+
                 case OverlayViewMode.Original:
                     RenderTextView(_overlayState.OcrText, region, x, y);
                     break;
@@ -611,6 +637,37 @@ namespace WpfAppTest
             rubyTextBlock.Width = region.Width;
             rubyTextBlock.Height = region.Height;
             rubyTextBlock.SetSegments(_overlayState.FuriganaSegments);
+
+            Canvas.SetLeft(rubyTextBlock, x);
+            Canvas.SetTop(rubyTextBlock, y);
+            rubyTextBlock.Visibility = Visibility.Visible;
+            translatedTextBlock.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Renders the Breakdown view (hoverable vocab + grammar parts) using <c>rubyTextBlock</c>.
+        /// When no breakdown data is available (disabled, failed, or still loading), the
+        /// original OCR text is rendered instead while the view mode stays Breakdown, so
+        /// the F-key cycle can continue past this mode.
+        /// </summary>
+        private void RenderBreakdownView(System.Drawing.Rectangle region, double x, double y)
+        {
+            if (_overlayState.BreakdownParts.Count == 0)
+            {
+                Debug.WriteLine($"[Breakdown] RenderBreakdownView: no parts (enabled={_settings.Breakdown.Enabled}) — showing original text.");
+                RenderTextView(_overlayState.OcrText, region, x, y);
+                return;
+            }
+
+            string surfaceText = string.Concat(_overlayState.BreakdownParts.Select(p => p.Surface));
+
+            // Calculate optimal font size accounting for ruby row overhead
+            double optimalFontSize = CalculateOptimalFontSizeRuby(surfaceText, region.Width, region.Height);
+
+            rubyTextBlock.BaseFontSize = optimalFontSize;
+            rubyTextBlock.Width = region.Width;
+            rubyTextBlock.Height = region.Height;
+            rubyTextBlock.SetBreakdownParts(_overlayState.BreakdownParts);
 
             Canvas.SetLeft(rubyTextBlock, x);
             Canvas.SetTop(rubyTextBlock, y);
@@ -764,6 +821,75 @@ namespace WpfAppTest
         }
 
         /// <summary>
+        /// Fetches the sentence breakdown (vocab + grammar parts) for the given text
+        /// via the configured LLM. Runs in the background; updates the overlay if the
+        /// Breakdown view is active. Empty/failed results leave the view rendering
+        /// the original OCR text.
+        /// </summary>
+        private async Task FetchBreakdownAsync(string text, CancellationToken ct)
+        {
+            try
+            {
+                var provider = GetOrCreateBreakdownProvider();
+                if (provider == null)
+                    return;
+
+                var parts = await provider.BreakdownAsync(text, ct);
+
+                ct.ThrowIfCancellationRequested();
+
+                _overlayState.BreakdownParts = parts;
+
+                // If the user is in Breakdown view, re-render with the new parts
+                if (_overlayState.CurrentView == OverlayViewMode.Breakdown)
+                {
+                    RenderOverlay();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when user selects a new region — ignore
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Breakdown] Fetch error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Lazily creates or returns the cached <see cref="LLMSentenceBreakdownProvider"/>
+        /// from the user's breakdown settings (falls back to the provider's translation
+        /// model when no dedicated model is set). Returns null when unconfigured.
+        /// </summary>
+        private ISentenceBreakdownProvider? GetOrCreateBreakdownProvider()
+        {
+            if (_breakdownProvider != null)
+                return _breakdownProvider;
+
+            try
+            {
+                var config = _settings.GetProviderConfig(_settings.Breakdown.Provider);
+                string model = string.IsNullOrEmpty(_settings.Breakdown.Model)
+                    ? config.TranslationModel
+                    : _settings.Breakdown.Model;
+
+                if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(model))
+                {
+                    Debug.WriteLine("[Breakdown] Cannot create provider — endpoint/model not configured.");
+                    return null;
+                }
+
+                _breakdownProvider = ProviderFactory.CreateBreakdownProvider(_settings);
+                return _breakdownProvider;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Breakdown] Failed to create provider: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Merges LLM-generated furigana readings into the Sudachi segment list.
         /// For each OOV or missing-reading segment, finds a matching LLM segment
         /// by exact surface equality and copies its reading. Advances through the
@@ -859,6 +985,15 @@ namespace WpfAppTest
         }
 
         /// <summary>
+        /// Handles "Show Breakdown" context menu click — switches overlay to Breakdown view.
+        /// </summary>
+        private void ShowBreakdown_Click(object sender, RoutedEventArgs e)
+        {
+            _overlayState.CurrentView = OverlayViewMode.Breakdown;
+            RenderOverlay();
+        }
+
+        /// <summary>
         /// Handles "Show Translation" context menu click — switches overlay to Translation view.
         /// </summary>
         private void ShowTranslation_Click(object sender, RoutedEventArgs e)
@@ -878,7 +1013,7 @@ namespace WpfAppTest
 
         /// <summary>
         /// Handles F-key press on overlay controls to cycle view:
-        /// Translation → Furigana → Original → Translation.
+        /// Translation → Furigana → Breakdown → Original → Translation.
         /// Uses PreviewKeyDown (not global Window.KeyDown) to avoid conflicts.
         /// </summary>
         private void Overlay_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -888,7 +1023,8 @@ namespace WpfAppTest
                 _overlayState.CurrentView = _overlayState.CurrentView switch
                 {
                     OverlayViewMode.Translation => OverlayViewMode.Furigana,
-                    OverlayViewMode.Furigana => OverlayViewMode.Original,
+                    OverlayViewMode.Furigana => OverlayViewMode.Breakdown,
+                    OverlayViewMode.Breakdown => OverlayViewMode.Original,
                     OverlayViewMode.Original => OverlayViewMode.Translation,
                     _ => OverlayViewMode.Translation
                 };
@@ -1027,6 +1163,16 @@ namespace WpfAppTest
                 _furiganaCts?.Dispose();
                 _furiganaCts = new CancellationTokenSource();
                 _ = FetchFuriganaAsync(OCRText, _furiganaCts.Token);
+            }
+
+            // Re-fetch breakdown for the edited text
+            _overlayState.BreakdownParts.Clear();
+            if (_settings.Breakdown.Enabled)
+            {
+                _breakdownCts?.Cancel();
+                _breakdownCts?.Dispose();
+                _breakdownCts = new CancellationTokenSource();
+                _ = FetchBreakdownAsync(OCRText, _breakdownCts.Token);
             }
 
             TranslatedText = await GetTranslatedTextAsync(editTextBox.Text);

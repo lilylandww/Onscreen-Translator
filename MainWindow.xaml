@@ -25,6 +25,7 @@
         <!-- Shared context menu for overlay controls (translatedTextBlock & rubyTextBlock) -->
         <ContextMenu x:Key="OverlayContextMenu">
             <MenuItem Header="Show Furigana" Click="ShowFurigana_Click" />
+            <MenuItem Header="Show Breakdown" Click="ShowBreakdown_Click" />
             <MenuItem Header="Show Translation" Click="ShowTranslation_Click" />
             <MenuItem Header="Show Original" Click="ShowOriginal_Click" />
             <Separator />

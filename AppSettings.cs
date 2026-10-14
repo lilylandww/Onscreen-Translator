@@ -87,6 +87,18 @@ public class FuriganaSettings
     public int FlflLatencyThresholdMs { get; set; } = 2000;
 }
 
+public class BreakdownSettings
+{
+    /// <summary>Whether the breakdown LLM call runs after each capture.</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>LLM endpoint provider: "ollama" | "openai" | "openai-compatible".</summary>
+    public string Provider { get; set; } = "ollama";
+
+    /// <summary>Model name. Empty = use the provider's translation model.</summary>
+    public string Model { get; set; } = "";
+}
+
 public class AppSettings
 {
     private static readonly string SettingsPath = Path.Combine(
@@ -136,6 +148,9 @@ public class AppSettings
 
     // Furigana sidecar configuration
     public FuriganaSettings Furigana { get; set; } = new();
+
+    // Sentence breakdown (vocab + grammar) configuration
+    public BreakdownSettings Breakdown { get; set; } = new();
 
     // Last picked display index (for screen switch persistence)
     public int LastScreenIndex { get; set; } = -1;
