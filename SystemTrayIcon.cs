@@ -217,12 +217,26 @@ namespace WpfAppTest
 
             DestroyMenu(hMenu);
 
+            // TPM_RETURNCMD returns the selection directly — WM_COMMAND is never
+            // posted, so extra items must be dispatched here (the WM_COMMAND
+            // branch in WndProc is only a fallback).
             if (cmd == IDM_RESTORE)
                 _onRestore?.Invoke();
             else if (cmd == IDM_SETTINGS)
                 _onSettings?.Invoke();
             else if (cmd == IDM_EXIT)
                 _onExit?.Invoke();
+            else
+            {
+                foreach (var item in _extraItems)
+                {
+                    if (item.Id == cmd)
+                    {
+                        item.Action.Invoke();
+                        break;
+                    }
+                }
+            }
         }
 
         public void Show()

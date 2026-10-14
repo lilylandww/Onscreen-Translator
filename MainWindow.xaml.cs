@@ -38,6 +38,7 @@ namespace WpfAppTest
         private LowLevelInputMonitor? _inputMonitor;
         private RegionChangeWatcher? _regionWatcher;
         private bool _drawArmed;
+        private bool _capturePipelineBusy;
         private bool _captureExcludesSelf;
         private OverlayState? _redrawSnapshot;
         private bool _chipVisibleBeforeArm;
@@ -162,6 +163,7 @@ namespace WpfAppTest
                     {
                         _drawArmed = false;
                         DismissOverlayContent(clearState: true);
+                        BackgroundBrush.Opacity = 0; // drop the armed-draw dim
                         UpdateOverlayPointerStateAtCursor();
                     }
                     else
@@ -216,7 +218,7 @@ namespace WpfAppTest
             LiveModeToggleButton.IsChecked = _liveMode;
 
             // Re-register overlay hotkeys and converge on the saved overlay state
-            _hotkeyManager?.Register(_settings.Overlay.ToggleHotkey, _settings.Overlay.DrawHotkey);
+            RegisterOverlayHotkeys(notifyOnFailure: true);
             OverlayModeToggleButton.ToolTip = $"Overlay Mode ({_settings.Overlay.ToggleHotkey})";
             if (_settings.Overlay.Enabled != _overlayMode)
                 SetOverlayMode(_settings.Overlay.Enabled);
@@ -311,6 +313,9 @@ namespace WpfAppTest
             // Don't initiate capture if capture mode is disabled
             if (!captureModeEnabled) return;
 
+            // Refuse new selections while the previous capture pipeline is in flight
+            if (_capturePipelineBusy) return;
+
             isSelecting = true;
             TopButtonStack.Visibility = Visibility.Collapsed;
             vancas.CaptureMouse();
@@ -341,6 +346,23 @@ namespace WpfAppTest
             if (!isSelecting) return;
 
             isSelecting = false;
+
+            // One capture/OCR/translate pipeline at a time (MouseDown refuses new
+            // selections while this is set) — interleaved runs would corrupt
+            // _overlayState and bitmap ownership.
+            _capturePipelineBusy = true;
+            try
+            {
+                await CompleteSelectionAsync(e);
+            }
+            finally
+            {
+                _capturePipelineBusy = false;
+            }
+        }
+
+        private async Task CompleteSelectionAsync(MouseButtonEventArgs e)
+        {
             CurrentScreen = null;
             CursorClipper.UnClipCursor();
             vancas.ReleaseMouseCapture();
@@ -964,6 +986,7 @@ namespace WpfAppTest
             if (e.ClickCount == 2 && !isEditing)
             {
                 isEditing = true;
+                _regionWatcher?.Suspend(); // typing must not dismiss the card
                 // UpdateTextBlock("", new Rectangle(0, 0, 0, 0), 0, 0);
 
                 editTextBox = new TextBox
@@ -995,6 +1018,7 @@ namespace WpfAppTest
             if (!isEditing)
             {
                 isEditing = true;
+                _regionWatcher?.Suspend(); // typing must not dismiss the card
 
                 editTextBox = new TextBox
                 {
@@ -1094,6 +1118,8 @@ namespace WpfAppTest
             isEditing = false;
 
             RenderOverlay();
+            _regionWatcher?.Resume();
+            UpdateOverlayPointerStateAtCursor();
         }
 
         private void CancelEditing()
@@ -1105,6 +1131,9 @@ namespace WpfAppTest
             FinishEditButton.Visibility = Visibility.Collapsed;
             editTextBox = null;
             isEditing = false;
+
+            _regionWatcher?.Resume();
+            UpdateOverlayPointerStateAtCursor();
         }
 
         private async void FreezeScreen()
@@ -1149,8 +1178,17 @@ namespace WpfAppTest
         {
             if (_overlayMode)
             {
-                // Overlay never freezes the screen behind it.
-                Unfreeze();
+                // Overlay never freezes the screen behind it — but an armed draw
+                // must keep its dim if the user tabs away and back mid-draw.
+                if (_drawArmed || isSelecting)
+                {
+                    BG.Source = null;
+                    BackgroundBrush.Opacity = 0.25;
+                }
+                else
+                {
+                    Unfreeze();
+                }
             }
             else if (_liveMode)
             {
@@ -1337,7 +1375,7 @@ namespace WpfAppTest
         {
             _hotkeyManager = new HotkeyManager(this);
             _hotkeyManager.HotkeyPressed += OnOverlayHotkeyPressed;
-            _hotkeyManager.Register(_settings.Overlay.ToggleHotkey, _settings.Overlay.DrawHotkey);
+            RegisterOverlayHotkeys(notifyOnFailure: true);
 
             _overlayManager = new OverlayModeManager(this);
 
@@ -1352,6 +1390,11 @@ namespace WpfAppTest
             _regionWatcher.CaptureRegionAsync = WatcherCaptureRegionAsync;
             _regionWatcher.RegionChanged += OnOverlayRegionChanged;
 
+            // Region coordinates become invalid when the display layout changes;
+            // lock/unlock pauses checks (secure desktop delivers no input anyway).
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+            Microsoft.Win32.SystemEvents.SessionSwitch += OnSystemSessionSwitch;
+
             OverlayModeToggleButton.ToolTip = $"Overlay Mode ({_settings.Overlay.ToggleHotkey})";
             RedrawChipText.Text = $"Screen changed — {_settings.Overlay.DrawHotkey} to redraw";
 
@@ -1361,6 +1404,8 @@ namespace WpfAppTest
 
         private void DisposeOverlayInfrastructure()
         {
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+            Microsoft.Win32.SystemEvents.SessionSwitch -= OnSystemSessionSwitch;
             _hotkeyManager?.Dispose();
             _hotkeyManager = null;
             _inputMonitor?.Dispose();
@@ -1369,6 +1414,58 @@ namespace WpfAppTest
             _regionWatcher = null;
             _overlayManager?.Dispose();
             _overlayManager = null;
+        }
+
+        /// <summary>
+        /// Registers the overlay hotkeys; when <paramref name="notifyOnFailure"/>
+        /// is set, a conflict/parse failure raises a message box instead of
+        /// silently losing the only in-app entry point for the overlay.
+        /// </summary>
+        private void RegisterOverlayHotkeys(bool notifyOnFailure)
+        {
+            if (_hotkeyManager == null) return;
+
+            bool ok = _hotkeyManager.Register(
+                _settings.Overlay.ToggleHotkey, _settings.Overlay.DrawHotkey);
+
+            if (!ok && notifyOnFailure)
+            {
+                MessageBox.Show(
+                    this,
+                    $"Could not register overlay hotkey(es):\n" +
+                    $"  Toggle: {_settings.Overlay.ToggleHotkey}\n" +
+                    $"  Draw region: {_settings.Overlay.DrawHotkey}\n\n" +
+                    "Another application may already be using them, or the format is invalid.\n" +
+                    "Change them in Settings → Overlay Mode.",
+                    "Overlay Hotkey Conflict",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_overlayMode) return;
+                // Monitor layout/resolution changed — the watched region and card
+                // anchors are no longer meaningful.
+                DismissOverlayContent(clearState: true);
+                BackgroundBrush.Opacity = 0;
+                UpdateOverlayPointerStateAtCursor();
+            });
+        }
+
+        private void OnSystemSessionSwitch(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_regionWatcher == null) return;
+                if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock)
+                    _regionWatcher.Suspend();
+                else if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock)
+                    _regionWatcher.Resume();
+            });
         }
 
         private void OnOverlayHotkeyPressed(int id)
@@ -1504,6 +1601,10 @@ namespace WpfAppTest
             _drawArmed = true;
             _regionWatcher?.Disarm();
 
+            // A fade-out still in flight must not collapse the new card.
+            _chipFadeTimer?.Stop();
+            _chipFadeTimer = null;
+
             // The whole window must receive the selection drag.
             _overlayManager?.SetClickThrough(false);
             _overlayManager?.SetNoActivate(false);
@@ -1561,6 +1662,7 @@ namespace WpfAppTest
                 _lastCaptureRegion,
                 _lastReferenceFrame,
                 _settings.Overlay.ChangeSensitivity,
+                confirmWithPixels: _captureExcludesSelf,
                 enablePoll: _captureExcludesSelf);
         }
 
@@ -1590,13 +1692,19 @@ namespace WpfAppTest
                 await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
                 await Task.Delay(150);
 
+                // A new draw (or overlay exit) started during the delay — that
+                // pipeline owns arming now; bail before touching shared state.
+                if (!_overlayMode || isSelecting || _drawArmed || _capturePipelineBusy)
+                    return;
+
                 _lastCaptureRegion = region;
                 _lastReferenceFrame = RegionChangeWatcher.Downsample(bmp);
 
                 // Calibration: capture the region again while the card is visible.
                 // If the frames match, WDA_EXCLUDEFROMCAPTURE works with GDI and
-                // checks can run without hiding the card; otherwise checks hide
-                // the chrome briefly (input-triggered only, no polling).
+                // checks can confirm changes pixel-by-pixel; otherwise the watcher
+                // falls back to input-only invalidation (no pixel check, no poll,
+                // no card blinking).
                 using (System.Drawing.Bitmap? check = ImageMethods.GetRegionOfScreenAsBitmap(region))
                 {
                     float[] checkFrame = RegionChangeWatcher.Downsample(check);
@@ -1611,6 +1719,7 @@ namespace WpfAppTest
                         region,
                         _lastReferenceFrame,
                         _settings.Overlay.ChangeSensitivity,
+                        confirmWithPixels: _captureExcludesSelf,
                         enablePoll: _captureExcludesSelf);
                 }
             }
@@ -1625,44 +1734,12 @@ namespace WpfAppTest
             }
         }
 
-        /// <summary>Capture callback for the watcher (calibrated hide-when-needed path).</summary>
+        /// <summary>Capture callback for the watcher (pixel-confirmation mode only).</summary>
         private Task<System.Drawing.Bitmap?> WatcherCaptureRegionAsync(System.Drawing.Rectangle region)
         {
-            if (_captureExcludesSelf)
-                return Task.FromResult<System.Drawing.Bitmap?>(ImageMethods.GetRegionOfScreenAsBitmap(region));
-            return HideChromeCaptureAsync(region);
-        }
-
-        private async Task<System.Drawing.Bitmap?> HideChromeCaptureAsync(System.Drawing.Rectangle region)
-        {
-            bool cardWasVisible = translatedTextBlock.Visibility == Visibility.Visible;
-            bool rubyWasVisible = rubyTextBlock.Visibility == Visibility.Visible;
-            bool chipWasVisible = RedrawChip.Visibility == Visibility.Visible;
-            bool handleWasVisible = CardDragHandle.Visibility == Visibility.Visible;
-
-            translatedTextBlock.Visibility = Visibility.Hidden;
-            rubyTextBlock.Visibility = Visibility.Hidden;
-            RedrawChip.Visibility = Visibility.Hidden;
-            CardDragHandle.Visibility = Visibility.Hidden;
-
-            try
-            {
-                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
-                await Task.Delay(60);
-                return ImageMethods.GetRegionOfScreenAsBitmap(region);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Overlay] Watcher capture failed: {ex.Message}");
-                return null;
-            }
-            finally
-            {
-                if (cardWasVisible) translatedTextBlock.Visibility = Visibility.Visible;
-                if (rubyWasVisible) rubyTextBlock.Visibility = Visibility.Visible;
-                if (chipWasVisible) RedrawChip.Visibility = Visibility.Visible;
-                if (handleWasVisible) CardDragHandle.Visibility = Visibility.Visible;
-            }
+            // Only invoked when calibration proved GDI capture excludes our own
+            // window; no chrome hiding needed (and no DWM present race).
+            return Task.FromResult<System.Drawing.Bitmap?>(ImageMethods.GetRegionOfScreenAsBitmap(region));
         }
 
         /// <summary>The watched region changed: fade the card out and show the redraw chip.</summary>
@@ -1831,6 +1908,20 @@ namespace WpfAppTest
             _regionWatcher?.Resume();
             UpdateOverlayPointerStateAtCursor();
             e.Handled = true;
+        }
+
+        /// <summary>
+        /// Recovery path: a drag interrupted by capture steal (alt-tab, UAC,
+        /// window deactivate) must never leave _isDraggingCard stuck — that would
+        /// keep the fullscreen overlay mouse-opaque system-wide.
+        /// </summary>
+        private void CardDragHandle_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            if (!_isDraggingCard) return;
+
+            _isDraggingCard = false;
+            _regionWatcher?.Resume();
+            UpdateOverlayPointerStateAtCursor();
         }
 
         private void UpdateOverlayPointerStateAtCursor()

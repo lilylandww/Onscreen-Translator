@@ -11,6 +11,15 @@ namespace WpfAppTest;
 /// from screen capture (WDA_EXCLUDEFROMCAPTURE), and a click-through /
 /// non-activating state that can be toggled per-pointer-position so the
 /// translation card stays interactive while everything else passes through.
+///
+/// Note on the click-through mechanism: the obvious per-element alternative —
+/// returning HTTRANSPARENT from WM_NCHITTEST — only passes hits to
+/// "underlying windows in the same thread" (WM_NCHITTEST docs), so it cannot
+/// forward clicks to other processes, which is the entire point of this
+/// feature. WS_EX_TRANSPARENT (layered + extended style) is the supported
+/// cross-process mechanism; the low-level mouse hook flips it so the card
+/// region stays interactive (see LowLevelInputMonitor for the watchdog that
+/// keeps the hook alive).
 /// </summary>
 public sealed class OverlayModeManager : IDisposable
 {

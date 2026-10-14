@@ -95,3 +95,22 @@ width = region width, height grows beyond region if needed, existing
 7. polish (fade, chip, Esc, monitors/DPI) → 8. build + checklist → commit
 `feature: overlay mode with click-through translation card and screen-change
 invalidation` + session summary in `docs/agent-sessions/`.
+
+## Review follow-ups (post-0c72f63)
+
+- **Click-through mechanism confirmed**: `WM_NCHITTEST`/`HTTRANSPARENT` only
+  forwards hits to windows *in the same thread* (Microsoft WM_NCHITTEST docs),
+  so it cannot pass clicks to other processes — cross-process click-through
+  requires `WS_EX_TRANSPARENT` toggled via the LL mouse hook (documented in
+  `OverlayModeManager`).
+- Tray items dispatch from `TrackPopupMenu`'s `TPM_RETURNCMD` return
+  (`WM_COMMAND` never fires).
+- Pixel-diff compares against the **fixed** translation-time reference; rebase
+  only below the 0.005 noise floor so slow drift accumulates.
+- When calibration shows GDI capture cannot exclude our card, the watcher
+  switches to **input-only invalidation** (debounced, no pixel check, no poll)
+  — avoids the DWM present race and card blinking.
+- Drag recovery via `LostMouseCapture`; edit suspends the watcher; one capture
+  pipeline at a time; LL hook heartbeat watchdog reinstalls dropped hooks;
+  hotkey registration failures surface a message box; display-layout change
+  dismisses the overlay.

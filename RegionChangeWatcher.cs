@@ -39,10 +39,18 @@ public sealed class RegionChangeWatcher : IDisposable
     private Rectangle _region;
     private float[]? _reference;
     private double _sensitivity;
+    private bool _confirmWithPixels;
     private bool _checkRunning;
     private bool _pendingCheck;
     private bool _suspended;
     private bool _disposed;
+
+    /// <summary>
+    /// Single-check diffs below this are treated as compositor/encoding noise
+    /// and may be rebased; anything above accumulates against the fixed
+    /// reference taken at translation time.
+    /// </summary>
+    private const double NoiseFloor = 0.005;
 
     public RegionChangeWatcher(Dispatcher dispatcher)
     {
@@ -59,20 +67,27 @@ public sealed class RegionChangeWatcher : IDisposable
         _pollTimer.Tick += (_, _) => RunCheckAsync();
     }
 
-    /// <summary>Starts watching with the given reference frame (downsampled).</summary>
-    public void Arm(Rectangle region, float[] referenceFrame, double sensitivity, bool enablePoll)
+    /// <summary>
+    /// Starts watching with the given reference frame (downsampled).
+    /// <paramref name="confirmWithPixels"/> false = input-only invalidation
+    /// (used when capture cannot see past our own card; a pixel check would
+    /// race the DWM present and blink the card). <paramref name="enablePoll"/>
+    /// only makes sense together with pixel confirmation.
+    /// </summary>
+    public void Arm(Rectangle region, float[] referenceFrame, double sensitivity, bool confirmWithPixels, bool enablePoll)
     {
         if (_disposed) return;
 
         _region = region;
         _reference = referenceFrame;
         _sensitivity = Math.Clamp(sensitivity, 0.005, 0.5);
+        _confirmWithPixels = confirmWithPixels;
         IsArmed = true;
         _suspended = false;
         _pendingCheck = false;
 
         _pollTimer.Stop();
-        if (enablePoll)
+        if (enablePoll && confirmWithPixels)
             _pollTimer.Start();
     }
 
@@ -106,6 +121,16 @@ public sealed class RegionChangeWatcher : IDisposable
     private async void RunCheckAsync()
     {
         if (!IsArmed || _disposed || _suspended || _reference == null) return;
+
+        // Input-only mode (capture can't exclude our card): any debounced input
+        // from the underlying app invalidates — the screen *may* have changed.
+        if (!_confirmWithPixels)
+        {
+            Disarm();
+            RegionChanged?.Invoke();
+            return;
+        }
+
         if (_checkRunning)
         {
             _pendingCheck = true;
@@ -118,8 +143,15 @@ public sealed class RegionChangeWatcher : IDisposable
             Bitmap? bmp = CaptureRegionAsync != null
                 ? await CaptureRegionAsync(_region)
                 : null;
-            if (bmp == null || !IsArmed)
+            if (bmp == null)
                 return;
+
+            // Disarmed while the capture was in flight — drop the result.
+            if (_reference == null || !IsArmed)
+            {
+                bmp.Dispose();
+                return;
+            }
 
             float[] current;
             using (bmp)
@@ -135,9 +167,11 @@ public sealed class RegionChangeWatcher : IDisposable
                 Disarm();
                 RegionChanged?.Invoke();
             }
-            else
+            else if (diff < NoiseFloor)
             {
-                // Rebase so slow cumulative drift eventually crosses the threshold.
+                // Rebase only genuine noise. Larger sub-threshold diffs must keep
+                // accumulating against the fixed translation-time reference, or
+                // slow scrolling/typing would never cross the threshold.
                 _reference = current;
             }
         }
