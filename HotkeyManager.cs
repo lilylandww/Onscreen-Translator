@@ -33,25 +33,32 @@ public sealed class HotkeyManager : IDisposable
     }
 
     /// <summary>
-    /// (Re-)registers both hotkeys. Idempotent: unregisters any previous ones first.
-    /// Unparseable or conflicting hotkeys are skipped with a debug log.
+    /// (Re-)registers both hotkeys. Idempotent: unregisters any previous ones
+    /// first. Returns false if any non-empty hotkey could not be parsed or
+    /// registered (conflict with another app) — callers should surface that,
+    /// not just log it, or the overlay silently loses its only entry point.
     /// </summary>
-    public void Register(string? toggleHotkey, string? drawHotkey)
+    public bool Register(string? toggleHotkey, string? drawHotkey)
     {
-        if (_disposed) return;
+        if (_disposed) return false;
 
         UnregisterAll();
+        bool success = true;
 
         if (TryParse(toggleHotkey, out uint toggleMods, out uint toggleVk))
         {
             _toggleRegistered = OSInterop.RegisterHotKey(
                 _hwnd, ToggleOverlayId, toggleMods | OSInterop.MOD_NOREPEAT, toggleVk);
             if (!_toggleRegistered)
+            {
                 Debug.WriteLine($"[HotkeyManager] Failed to register toggle hotkey '{toggleHotkey}' (conflict?).");
+                success = false;
+            }
         }
         else if (!string.IsNullOrWhiteSpace(toggleHotkey))
         {
             Debug.WriteLine($"[HotkeyManager] Could not parse toggle hotkey '{toggleHotkey}'.");
+            success = false;
         }
 
         if (TryParse(drawHotkey, out uint drawMods, out uint drawVk))
@@ -59,12 +66,18 @@ public sealed class HotkeyManager : IDisposable
             _drawRegistered = OSInterop.RegisterHotKey(
                 _hwnd, DrawRegionId, drawMods | OSInterop.MOD_NOREPEAT, drawVk);
             if (!_drawRegistered)
+            {
                 Debug.WriteLine($"[HotkeyManager] Failed to register draw hotkey '{drawHotkey}' (conflict?).");
+                success = false;
+            }
         }
         else if (!string.IsNullOrWhiteSpace(drawHotkey))
         {
             Debug.WriteLine($"[HotkeyManager] Could not parse draw hotkey '{drawHotkey}'.");
+            success = false;
         }
+
+        return success;
     }
 
     public void UnregisterAll()
@@ -131,11 +144,23 @@ public sealed class HotkeyManager : IDisposable
             }
         }
 
+        // A bare key ("O") would be swallowed system-wide — require a modifier.
+        if (modifiers == 0)
+            return false;
+
         string keyPart = parts[^1];
-        if (keyPart.Length == 1 && char.IsLetterOrDigit(keyPart[0]))
+
+        // ASCII letters/digits only: VK codes for A-Z/0-9 equal their codes, and
+        // char.IsLetterOrDigit would accept non-ASCII whose uppercased form
+        // doesn't map to a virtual key.
+        if (keyPart.Length == 1)
         {
-            virtualKey = char.ToUpperInvariant(keyPart[0]);
-            return true;
+            char c = char.ToUpperInvariant(keyPart[0]);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+            {
+                virtualKey = c;
+                return true;
+            }
         }
 
         if (keyPart.Length >= 2 && (keyPart[0] is 'F' or 'f')

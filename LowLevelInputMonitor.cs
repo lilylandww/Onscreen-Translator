@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Windows.Threading;
 
 namespace WpfAppTest;
 
@@ -10,7 +11,8 @@ namespace WpfAppTest;
 /// the cursor is over the translation card, and (2) input-activity notifications
 /// that drive screen-change invalidation.
 /// Hooks run on the installing (UI) thread's message loop; callbacks must stay
-/// fast or Windows silently drops the hook (LowLevelHooksTimeout).
+/// fast or Windows silently drops the hook (LowLevelHooksTimeout). A heartbeat
+/// watchdog reinstalls the hooks if the mouse moves but no hook callback fires.
 /// </summary>
 public sealed class LowLevelInputMonitor : IDisposable
 {
@@ -26,37 +28,87 @@ public sealed class LowLevelInputMonitor : IDisposable
     /// <summary>Raised on non-modifier key down events (UI thread).</summary>
     public event Action? KeyDownActivity;
 
+    private const int HeartbeatIntervalMs = 3000;
+    private const double SilenceThresholdSeconds = 3.5;
+
     private IntPtr _mouseHook;
     private IntPtr _keyboardHook;
     private OSInterop.HookProc? _mouseProc;
     private OSInterop.HookProc? _keyProc;
+    private DispatcherTimer? _heartbeat;
+    private System.Windows.Point _lastSamplePos;
+    private DateTime _lastMouseEventUtc = DateTime.MinValue;
     private bool _started;
     private bool _disposed;
 
     public void Start()
     {
         if (_started || _disposed) return;
+        _started = true;
 
+        InstallHooks();
+
+        // Watchdog: LL hooks are silently removed when their callback exceeds
+        // LowLevelHooksTimeout; if the cursor moves while the mouse hook stays
+        // silent, assume the hooks are gone and reinstall. (A keyboard-only drop
+        // is not detectable without hooks — mouse activity renews them anyway.)
+        _heartbeat = new DispatcherTimer(DispatcherPriority.Background, Dispatcher.CurrentDispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(HeartbeatIntervalMs)
+        };
+        _heartbeat.Tick += OnHeartbeat;
+        _heartbeat.Start();
+    }
+
+    private void InstallHooks()
+    {
         _mouseProc = MouseHookCallback;
         _keyProc = KeyboardHookCallback;
 
-        using Process current = Process.GetCurrentProcess();
-        using ProcessModule module = current.MainModule ?? throw new InvalidOperationException("No main module");
-        IntPtr hModule = OSInterop.LoadLibrary(module.ModuleName);
+        // GetModuleHandle: no extra module refcount (LoadLibrary would leak one).
+        IntPtr hModule = OSInterop.GetModuleHandle(null);
 
         _mouseHook = OSInterop.SetWindowsHookEx(OSInterop.WH_MOUSE_LL, _mouseProc, hModule, 0);
         _keyboardHook = OSInterop.SetWindowsHookEx(OSInterop.WH_KEYBOARD_LL, _keyProc, hModule, 0);
 
         if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
             Debug.WriteLine("[InputMonitor] Failed to install one or more low-level hooks.");
+    }
 
-        _started = true;
+    private void ReinstallHooks()
+    {
+        Debug.WriteLine("[InputMonitor] Heartbeat: mouse hook silent despite cursor movement — reinstalling hooks.");
+        if (_mouseHook != IntPtr.Zero)
+        {
+            OSInterop.UnhookWindowsHookEx(_mouseHook);
+            _mouseHook = IntPtr.Zero;
+        }
+        if (_keyboardHook != IntPtr.Zero)
+        {
+            OSInterop.UnhookWindowsHookEx(_keyboardHook);
+            _keyboardHook = IntPtr.Zero;
+        }
+        InstallHooks();
+    }
+
+    private void OnHeartbeat(object? sender, EventArgs e)
+    {
+        if (_disposed || !Utilities.ApplicationUtilities.GetMousePosition(out System.Windows.Point pos))
+            return;
+
+        bool cursorMoved = pos != _lastSamplePos;
+        _lastSamplePos = pos;
+
+        bool mouseSilent = (DateTime.UtcNow - _lastMouseEventUtc).TotalSeconds > SilenceThresholdSeconds;
+        if (cursorMoved && mouseSilent && _lastMouseEventUtc != DateTime.MinValue)
+            ReinstallHooks();
     }
 
     private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0)
         {
+            _lastMouseEventUtc = DateTime.UtcNow;
             var info = Marshal.PtrToStructure<OSInterop.MSLLHOOKSTRUCT>(lParam);
             var point = new System.Drawing.Point(info.Pt.X, info.Pt.Y);
             int msg = wParam.ToInt32();
@@ -110,6 +162,12 @@ public sealed class LowLevelInputMonitor : IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        if (_heartbeat != null)
+        {
+            _heartbeat.Stop();
+            _heartbeat.Tick -= OnHeartbeat;
+            _heartbeat = null;
+        }
         if (_mouseHook != IntPtr.Zero)
         {
             OSInterop.UnhookWindowsHookEx(_mouseHook);

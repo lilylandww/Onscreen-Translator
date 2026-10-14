@@ -148,6 +148,7 @@
                 MouseLeftButtonDown="CardDragHandle_MouseLeftButtonDown"
                 MouseMove="CardDragHandle_MouseMove"
                 MouseLeftButtonUp="CardDragHandle_MouseLeftButtonUp"
+                LostMouseCapture="CardDragHandle_LostMouseCapture"
                 ToolTip="Drag translation">
                 <TextBlock
                     Text="&#xE784;"

@@ -142,7 +142,8 @@ keep working in them:
   the content under the watched region, the translation fades out and a small
   chip appears: *"Screen changed — Ctrl+Alt+T to redraw"*. Click the chip or
   press the hotkey to draw a new area.
-- **Esc** dismisses the card/chip while overlay mode is on.
+- **Esc** dismisses the card/chip once the overlay has keyboard focus (click
+  the card first — overlay mode otherwise never steals focus).
 
 Limitations: exclusive-fullscreen games do not render layered windows on top
 (use borderless windowed mode). A pixel-diff sensitivity slider and the
