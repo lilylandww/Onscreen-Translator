@@ -318,8 +318,6 @@ public class FuriganaServiceManager : IDisposable
             IsHealthy = false,
             Status = null
         });
-
-        return Task.CompletedTask;
     }
 
     private async void OnProcessExited(object? sender, EventArgs e)
