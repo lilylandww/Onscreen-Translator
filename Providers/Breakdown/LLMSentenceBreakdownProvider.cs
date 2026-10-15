@@ -16,6 +16,9 @@ namespace WpfAppTest.Providers.Breakdown;
 /// Follows the same request/harness pattern as
 /// <c>OllamaFuriganaFallbackProvider</c>; parsing/alignment is delegated to
 /// <see cref="BreakdownParser"/>.
+/// Callers pass an already-normalized base URL: for Ollama the factory appends
+/// <c>/v1</c> (see <c>ProviderFactory.WithOpenAIV1Path</c>), for OpenAI and
+/// OpenAI-compatible endpoints the configured URL must already include it.
 /// </summary>
 public class LLMSentenceBreakdownProvider : ISentenceBreakdownProvider, IDisposable
 {
@@ -32,7 +35,7 @@ public class LLMSentenceBreakdownProvider : ISentenceBreakdownProvider, IDisposa
     /// <summary>
     /// Creates a new <see cref="LLMSentenceBreakdownProvider"/>.
     /// </summary>
-    /// <param name="baseUrl">Base URL of the OpenAI-compatible endpoint (e.g. "http://localhost:11434").</param>
+    /// <param name="baseUrl">Base URL of the OpenAI-compatible endpoint including its version path (e.g. "http://localhost:11434/v1", "https://api.openai.com/v1").</param>
     /// <param name="apiKey">API key (may be empty for Ollama).</param>
     /// <param name="model">Model name to use for breakdown generation.</param>
     public LLMSentenceBreakdownProvider(string baseUrl, string apiKey, string model)

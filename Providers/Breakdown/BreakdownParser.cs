@@ -12,9 +12,11 @@ namespace WpfAppTest.Providers.Breakdown;
 /// Pure parser for the breakdown LLM's JSON-array output.
 /// Extracts the array (tolerating markdown fences/preambles), deserializes the
 /// short-keyed parts, and validates that the surfaces reproduce the original
-/// sentence exactly (whitespace-insensitive), mirroring the alignment contract
-/// of <c>OllamaFuriganaFallbackProvider.ParseRubyOutput</c>.
-/// Returns an empty list on any validation or parse failure.
+/// sentence. Alignment is exact — every non-line-break character (spaces
+/// included) must be reproduced — except line breaks, which are stripped from
+/// surfaces and the comparison: they are the whitespace class the LLM
+/// commonly reflows and cannot render inside an inline ruby grid container.
+/// On any validation or parse failure, returns an empty list.
 /// </summary>
 internal static class BreakdownParser
 {
@@ -69,26 +71,31 @@ internal static class BreakdownParser
             if (string.IsNullOrEmpty(r.Surface))
                 continue;
 
+            // Line breaks cannot render inside an inline ruby/grid container —
+            // strip them from surfaces before alignment and rendering.
+            var surface = StripLineBreaks(r.Surface);
+            if (string.IsNullOrEmpty(surface))
+                continue;
+
             var kind = r.Kind is "g" or "grammar"
                 ? BreakdownPartKind.Grammar
                 : BreakdownPartKind.Vocab;
             string? reading = string.IsNullOrWhiteSpace(r.Reading) ? null : r.Reading.Trim();
 
-            parts.Add(new BreakdownPart(r.Surface, reading, r.Meaning?.Trim() ?? "", kind));
+            parts.Add(new BreakdownPart(surface, reading, r.Meaning?.Trim() ?? "", kind));
         }
 
         if (parts.Count == 0)
             return new List<BreakdownPart>();
 
-        // Alignment validation: concatenated surfaces must reproduce the original text.
+        // Alignment validation: exact reproduction, line breaks excepted.
         string concatenated = string.Concat(parts.Select(p => p.Surface));
-        string originalNorm = NormalizeWhitespace(originalText);
-        string surfacesNorm = NormalizeWhitespace(concatenated);
+        string original = StripLineBreaks(originalText);
 
-        if (!string.Equals(originalNorm, surfacesNorm, StringComparison.Ordinal))
+        if (!string.Equals(original, concatenated, StringComparison.Ordinal))
         {
             Debug.WriteLine(
-                $"[BreakdownParser] Alignment validation failed: expected '{originalNorm}', got '{surfacesNorm}'.");
+                $"[BreakdownParser] Alignment validation failed: expected '{original}', got '{concatenated}'.");
             return new List<BreakdownPart>();
         }
 
@@ -102,7 +109,7 @@ internal static class BreakdownParser
     /// </summary>
     private static string? ExtractJsonArray(string text)
     {
-        text = Regex.Replace(text, @"```(?:json)?", "");
+        text = Regex.Replace(text, @"(?:```|~~~)(?:json)?", "");
 
         int start = text.IndexOf('[');
         int end = text.LastIndexOf(']');
@@ -113,8 +120,14 @@ internal static class BreakdownParser
     }
 
     /// <summary>
-    /// Removes all whitespace for alignment comparison.
+    /// Removes line break characters (CRLF, unicode line/paragraph separators)
+    /// while preserving all other characters, spaces included.
     /// </summary>
-    private static string NormalizeWhitespace(string text)
-        => Regex.Replace(text, @"\s+", "");
+    private static string StripLineBreaks(string text)
+        => text
+            .Replace("\r", "")
+            .Replace("\n", "")
+            .Replace("\u0085", "")
+            .Replace("\u2028", "")
+            .Replace("\u2029", "");
 }

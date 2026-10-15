@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using WpfAppTest.Providers.Breakdown;
@@ -179,11 +180,32 @@ public static class ProviderFactory
     }
 
     /// <summary>
-    /// Creates the sentence-breakdown provider from settings.
-    /// Uses <c>Breakdown.Model</c>, falling back to the chosen provider's
-    /// translation model when it is empty.
+    /// Ollama's OpenAI-compatible routes live under <c>/v1</c> (its native API is
+    /// <c>/api/*</c>), so a plain <c>host:port</c> Ollama URL gets <c>/v1</c>
+    /// appended before it is used as a chat-completions base address.
+    /// Non-Ollama providers are returned unchanged (their URLs are expected to
+    /// already include the version path).
     /// </summary>
-    public static ISentenceBreakdownProvider CreateBreakdownProvider(AppSettings settings)
+    public static string WithOpenAIV1Path(string providerName, string baseUrl)
+    {
+        if (!string.Equals(providerName, "ollama", StringComparison.OrdinalIgnoreCase))
+            return baseUrl;
+
+        var trimmed = baseUrl.TrimEnd('/');
+        return trimmed.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : trimmed + "/v1";
+    }
+
+    /// <summary>
+    /// Creates the sentence-breakdown provider from settings. This is the single
+    /// place where the breakdown endpoint/model is resolved: uses
+    /// <c>Breakdown.Model</c> (falling back to the chosen provider's translation
+    /// model when empty), applies Ollama <c>/v1</c> normalization, and defaults a
+    /// blank OpenAI base URL. Returns null when the target endpoint is
+    /// unconfigured — callers fall back to plain rendering.
+    /// </summary>
+    public static ISentenceBreakdownProvider? CreateBreakdownProvider(AppSettings settings)
     {
         var breakdown = settings.Breakdown;
         var providerName = breakdown.Provider;
@@ -192,9 +214,16 @@ public static class ProviderFactory
 
         var config = settings.GetProviderConfig(providerName);
         var model = string.IsNullOrEmpty(breakdown.Model) ? config.TranslationModel : breakdown.Model;
-        var baseUrl = string.IsNullOrEmpty(config.BaseUrl) && providerName == "openai"
+        var rawBaseUrl = string.IsNullOrEmpty(config.BaseUrl) && providerName == "openai"
             ? "https://api.openai.com/v1"
             : config.BaseUrl;
+        var baseUrl = WithOpenAIV1Path(providerName, rawBaseUrl);
+
+        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model))
+        {
+            Debug.WriteLine("[Breakdown] Cannot create provider — endpoint/model not configured.");
+            return null;
+        }
 
         return new LLMSentenceBreakdownProvider(baseUrl, config.ApiKey, model);
     }

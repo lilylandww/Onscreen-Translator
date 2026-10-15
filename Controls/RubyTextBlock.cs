@@ -48,7 +48,7 @@ public class RubyTextBlock : FrameworkElement
     private static readonly Brush _popupPrimaryTextBrush = CreateFrozenBrush(Color.FromRgb(84, 105, 115));      // DarkSlateGray
     private static readonly Brush _popupSecondaryTextBrush = CreateFrozenBrush(Color.FromRgb(120, 120, 120));   // Gray
     private static readonly Brush _grammarUnderlineBrush = CreateFrozenBrush(Color.FromRgb(30, 144, 255));       // DodgerBlue
-    private static readonly TextDecorationCollection? GrammarUnderline = CreateGrammarUnderline();
+    private static readonly TextDecorationCollection GrammarUnderline = CreateGrammarUnderline();
 
     private readonly TextBlock _textBlock;
     private readonly List<RubySegment> _segments = new();
@@ -100,7 +100,7 @@ public class RubyTextBlock : FrameworkElement
         return brush;
     }
 
-    private static TextDecorationCollection? CreateGrammarUnderline()
+    private static TextDecorationCollection CreateGrammarUnderline()
     {
         try
         {
@@ -110,7 +110,9 @@ public class RubyTextBlock : FrameworkElement
                 Location = TextDecorationLocation.Underline,
                 Pen = pen
             };
-            return new TextDecorationCollection { decoration };
+            var collection = new TextDecorationCollection { decoration };
+            collection.Freeze(); // shared across many TextBlocks
+            return collection;
         }
         catch (Exception)
         {
@@ -435,7 +437,7 @@ public class RubyTextBlock : FrameworkElement
         target.Background = Brushes.Transparent;
         target.Cursor = Cursors.Arrow;
 
-        if (part.Kind == BreakdownPartKind.Grammar && GrammarUnderline != null)
+        if (part.Kind == BreakdownPartKind.Grammar)
             surface.TextDecorations = GrammarUnderline;
 
         target.MouseEnter += (_, _) => OnBreakdownPartEnter(target, part);

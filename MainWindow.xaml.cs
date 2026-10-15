@@ -800,7 +800,10 @@ namespace WpfAppTest
             try
             {
                 var providerConfig = _settings.GetProviderConfig(_settings.TranslationProvider);
-                string baseUrl = providerConfig.BaseUrl;
+                // Ollama's OpenAI-compatible routes need a /v1 suffix (a plain
+                // host:port URL would 404 on /chat/completions).
+                string baseUrl = ProviderFactory.WithOpenAIV1Path(
+                    _settings.TranslationProvider, providerConfig.BaseUrl);
                 string apiKey = providerConfig.ApiKey;
                 string model = providerConfig.TranslationModel;
 
@@ -857,9 +860,9 @@ namespace WpfAppTest
         }
 
         /// <summary>
-        /// Lazily creates or returns the cached <see cref="LLMSentenceBreakdownProvider"/>
-        /// from the user's breakdown settings (falls back to the provider's translation
-        /// model when no dedicated model is set). Returns null when unconfigured.
+        /// Lazily creates or returns the cached breakdown provider. All
+        /// endpoint/model resolution (including Ollama /v1 normalization and
+        /// null-guarding) lives in <see cref="ProviderFactory.CreateBreakdownProvider"/>.
         /// </summary>
         private ISentenceBreakdownProvider? GetOrCreateBreakdownProvider()
         {
@@ -868,17 +871,6 @@ namespace WpfAppTest
 
             try
             {
-                var config = _settings.GetProviderConfig(_settings.Breakdown.Provider);
-                string model = string.IsNullOrEmpty(_settings.Breakdown.Model)
-                    ? config.TranslationModel
-                    : _settings.Breakdown.Model;
-
-                if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(model))
-                {
-                    Debug.WriteLine("[Breakdown] Cannot create provider — endpoint/model not configured.");
-                    return null;
-                }
-
                 _breakdownProvider = ProviderFactory.CreateBreakdownProvider(_settings);
                 return _breakdownProvider;
             }

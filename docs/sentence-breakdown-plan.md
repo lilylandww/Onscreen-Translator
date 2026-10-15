@@ -86,6 +86,16 @@ User output shape: `[{"s":"国境","r":"こっきょう","m":"border","t":"v"}, 
 - **Small models produce poor JSON** → dedicated `breakdown.model` setting; default reuses translation model (users can point at a larger one).
 - **Popup lingering across view switches** → popup closes on part MouseLeave, `IsVisibleChanged` of the control, and on every `SetSegments`/`SetBreakdownParts` rebuild.
 
+## Review Fixes (post-implementation round)
+
+| Finding | Fix |
+|---|---|
+| Ollama endpoint 404: `/chat/completions` against `host:11434` (its OpenAI-compatible route is `/v1/chat/completions`) — feature dead on default settings | `ProviderFactory.WithOpenAIV1Path` appends `/v1` to plain Ollama URLs; applied in `CreateBreakdownProvider` and at the furigana fallback call site (`GetOrCreateOllamaFallback`, same latent bug) |
+| `GetOrCreateBreakdownProvider` duplicated/contradicted factory resolution | Factory is now the single resolver: `CreateBreakdownProvider` returns null when unconfigured (also fixing silent-disable of blank-URL OpenAI configs) |
+| Whitespace-insensitive validation while rendering was verbatim | Alignment is now exact except line breaks (stripped from surfaces and comparison): dropped spaces are rejected; reflowed line breaks tolerated, since line breaks cannot render inside inline ruby grids |
+| Unfrozen shared `TextDecorationCollection` | Collection frozen, field non-nullable |
+| `~~~` fences not stripped | Fence regex handles backticks and tildes |
+
 ## Verification
 
 - `dotnet build WpfAppTest.csproj` — bar: 0 warnings / 0 errors (no C# test infra exists)
