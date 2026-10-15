@@ -143,6 +143,20 @@ public class AppSettings
         ["deepl"] = new ProviderConfig
         {
             ApiKey = ""
+        },
+        ["gemini"] = new ProviderConfig
+        {
+            BaseUrl = "https://generativelanguage.googleapis.com/v1beta",
+            ApiKey = "",
+            OcrModel = "gemini-2.0-flash",
+            TranslationModel = "gemini-2.0-flash"
+        },
+        ["anthropic"] = new ProviderConfig
+        {
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "",
+            OcrModel = "claude-sonnet-4-5",
+            TranslationModel = "claude-haiku-4-5"
         }
     };
 

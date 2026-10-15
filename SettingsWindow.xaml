@@ -202,6 +202,94 @@
                                         <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
                                     </Button>
                                 </Grid>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                    <TextBlock Text="Presets:" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/>
+                                    <Button Content="Groq" Style="{StaticResource SmallButton}" Margin="0,0,6,0"
+                                        Click="CompatPreset_Click" Tag="https://api.groq.com/openai/v1"/>
+                                    <Button Content="OpenRouter" Style="{StaticResource SmallButton}" Margin="0,0,6,0"
+                                        Click="CompatPreset_Click" Tag="https://openrouter.ai/api/v1"/>
+                                    <Button Content="LM Studio" Style="{StaticResource SmallButton}"
+                                        Click="CompatPreset_Click" Tag="http://localhost:1234/v1"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Gemini Settings -->
+                            <StackPanel x:Name="OcrGeminiPanel" Visibility="Collapsed">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Base URL:" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Grid.Column="1" x:Name="OcrGeminiBaseUrlTextBox"
+                                        Style="{StaticResource SettingsTextBox}"
+                                        Text="https://generativelanguage.googleapis.com/v1beta"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="API Key:" Style="{StaticResource FieldLabel}"/>
+                                    <PasswordBox Grid.Column="1" x:Name="OcrGeminiApiKeyBox"
+                                        Style="{StaticResource SettingsPasswordBox}"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="OcrGeminiModelComboBox"
+                                        Style="{StaticResource SettingsComboBox}"
+                                        IsEditable="True"/>
+                                    <Button Grid.Column="2" x:Name="RefreshOcrGeminiModelsButton"
+                                        Style="{StaticResource SmallButton}" Margin="6,0,0,0"
+                                        Click="RefreshOcrModels_Click" ToolTip="Refresh models">
+                                        <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Anthropic Settings -->
+                            <StackPanel x:Name="OcrAnthropicPanel" Visibility="Collapsed">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Base URL:" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Grid.Column="1" x:Name="OcrAnthropicBaseUrlTextBox"
+                                        Style="{StaticResource SettingsTextBox}"
+                                        Text="https://api.anthropic.com"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="API Key:" Style="{StaticResource FieldLabel}"/>
+                                    <PasswordBox Grid.Column="1" x:Name="OcrAnthropicApiKeyBox"
+                                        Style="{StaticResource SettingsPasswordBox}"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="OcrAnthropicModelComboBox"
+                                        Style="{StaticResource SettingsComboBox}"
+                                        IsEditable="True"/>
+                                    <Button Grid.Column="2" x:Name="RefreshOcrAnthropicModelsButton"
+                                        Style="{StaticResource SmallButton}" Margin="6,0,0,0"
+                                        Click="RefreshOcrModels_Click" ToolTip="Refresh models">
+                                        <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
+                                    </Button>
+                                </Grid>
                             </StackPanel>
                         </StackPanel>
 
@@ -367,6 +455,93 @@
                                         Style="{StaticResource SettingsComboBox}"
                                         IsEditable="True"/>
                                     <Button Grid.Column="2" x:Name="RefreshTransCompatModelsButton"
+                                        Style="{StaticResource SmallButton}" Margin="6,0,0,0"
+                                        Click="RefreshTranslationModels_Click" ToolTip="Refresh models">
+                                        <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
+                                    </Button>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                    <TextBlock Text="Presets:" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/>
+                                    <Button Content="Groq" Style="{StaticResource SmallButton}" Margin="0,0,6,0"
+                                        Click="CompatPreset_Click" Tag="https://api.groq.com/openai/v1"/>
+                                    <Button Content="OpenRouter" Style="{StaticResource SmallButton}" Margin="0,0,6,0"
+                                        Click="CompatPreset_Click" Tag="https://openrouter.ai/api/v1"/>
+                                    <Button Content="LM Studio" Style="{StaticResource SmallButton}"
+                                        Click="CompatPreset_Click" Tag="http://localhost:1234/v1"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Gemini Settings -->
+                            <StackPanel x:Name="TransGeminiPanel" Visibility="Collapsed">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Base URL:" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Grid.Column="1" x:Name="TransGeminiBaseUrlTextBox"
+                                        Style="{StaticResource SettingsTextBox}"
+                                        Text="https://generativelanguage.googleapis.com/v1beta"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="API Key:" Style="{StaticResource FieldLabel}"/>
+                                    <PasswordBox Grid.Column="1" x:Name="TransGeminiApiKeyBox"
+                                        Style="{StaticResource SettingsPasswordBox}"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="TransGeminiModelComboBox"
+                                        Style="{StaticResource SettingsComboBox}"
+                                        IsEditable="True"/>
+                                    <Button Grid.Column="2" x:Name="RefreshTransGeminiModelsButton"
+                                        Style="{StaticResource SmallButton}" Margin="6,0,0,0"
+                                        Click="RefreshTranslationModels_Click" ToolTip="Refresh models">
+                                        <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Anthropic Settings -->
+                            <StackPanel x:Name="TransAnthropicPanel" Visibility="Collapsed">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Base URL:" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Grid.Column="1" x:Name="TransAnthropicBaseUrlTextBox"
+                                        Style="{StaticResource SettingsTextBox}"
+                                        Text="https://api.anthropic.com"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="API Key:" Style="{StaticResource FieldLabel}"/>
+                                    <PasswordBox Grid.Column="1" x:Name="TransAnthropicApiKeyBox"
+                                        Style="{StaticResource SettingsPasswordBox}"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="TransAnthropicModelComboBox"
+                                        Style="{StaticResource SettingsComboBox}"
+                                        IsEditable="True"/>
+                                    <Button Grid.Column="2" x:Name="RefreshTransAnthropicModelsButton"
                                         Style="{StaticResource SmallButton}" Margin="6,0,0,0"
                                         Click="RefreshTranslationModels_Click" ToolTip="Refresh models">
                                         <wpfui:SymbolIcon Symbol="ArrowSync24" FontSize="14"/>

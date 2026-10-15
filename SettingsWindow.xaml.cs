@@ -110,6 +110,8 @@ public partial class SettingsWindow : Window
         OcrOllamaPanel.Visibility = Visibility.Collapsed;
         OcrOpenAIPanel.Visibility = Visibility.Collapsed;
         OcrOpenAICompatiblePanel.Visibility = Visibility.Collapsed;
+        OcrGeminiPanel.Visibility = Visibility.Collapsed;
+        OcrAnthropicPanel.Visibility = Visibility.Collapsed;
 
         switch (_workingCopy.OcrProvider)
         {
@@ -124,6 +126,14 @@ public partial class SettingsWindow : Window
             case "openai-compatible":
                 OcrOpenAICompatiblePanel.Visibility = Visibility.Visible;
                 LoadOcrCompatSettings();
+                break;
+            case "gemini":
+                OcrGeminiPanel.Visibility = Visibility.Visible;
+                LoadOcrGeminiSettings();
+                break;
+            case "anthropic":
+                OcrAnthropicPanel.Visibility = Visibility.Visible;
+                LoadOcrAnthropicSettings();
                 break;
         }
     }
@@ -152,6 +162,24 @@ public partial class SettingsWindow : Window
         OcrCompatApiKeyBox.Password = config.ApiKey;
         OcrCompatModelComboBox.Text = config.OcrModel;
         _ = LoadModelsForComboBoxAsync(OcrCompatModelComboBox, "openai-compatible", config.OcrModel);
+    }
+
+    private void LoadOcrGeminiSettings()
+    {
+        var config = _workingCopy.GetProviderConfig("gemini");
+        OcrGeminiBaseUrlTextBox.Text = string.IsNullOrEmpty(config.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : config.BaseUrl;
+        OcrGeminiApiKeyBox.Password = config.ApiKey;
+        OcrGeminiModelComboBox.Text = config.OcrModel;
+        _ = LoadModelsForComboBoxAsync(OcrGeminiModelComboBox, "gemini", config.OcrModel);
+    }
+
+    private void LoadOcrAnthropicSettings()
+    {
+        var config = _workingCopy.GetProviderConfig("anthropic");
+        OcrAnthropicBaseUrlTextBox.Text = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.anthropic.com" : config.BaseUrl;
+        OcrAnthropicApiKeyBox.Password = config.ApiKey;
+        OcrAnthropicModelComboBox.Text = config.OcrModel;
+        _ = LoadModelsForComboBoxAsync(OcrAnthropicModelComboBox, "anthropic", config.OcrModel);
     }
 
     #endregion
@@ -194,6 +222,8 @@ public partial class SettingsWindow : Window
         TransOllamaPanel.Visibility = Visibility.Collapsed;
         TransOpenAIPanel.Visibility = Visibility.Collapsed;
         TransOpenAICompatiblePanel.Visibility = Visibility.Collapsed;
+        TransGeminiPanel.Visibility = Visibility.Collapsed;
+        TransAnthropicPanel.Visibility = Visibility.Collapsed;
 
         switch (_workingCopy.TranslationProvider)
         {
@@ -216,6 +246,14 @@ public partial class SettingsWindow : Window
             case "openai-compatible":
                 TransOpenAICompatiblePanel.Visibility = Visibility.Visible;
                 LoadTransCompatSettings();
+                break;
+            case "gemini":
+                TransGeminiPanel.Visibility = Visibility.Visible;
+                LoadTransGeminiSettings();
+                break;
+            case "anthropic":
+                TransAnthropicPanel.Visibility = Visibility.Visible;
+                LoadTransAnthropicSettings();
                 break;
         }
     }
@@ -258,6 +296,24 @@ public partial class SettingsWindow : Window
         _ = LoadTranslationModelsForComboBoxAsync(TransCompatModelComboBox, "openai-compatible", config.TranslationModel);
     }
 
+    private void LoadTransGeminiSettings()
+    {
+        var config = _workingCopy.GetProviderConfig("gemini");
+        TransGeminiBaseUrlTextBox.Text = string.IsNullOrEmpty(config.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : config.BaseUrl;
+        TransGeminiApiKeyBox.Password = config.ApiKey;
+        TransGeminiModelComboBox.Text = config.TranslationModel;
+        _ = LoadTranslationModelsForComboBoxAsync(TransGeminiModelComboBox, "gemini", config.TranslationModel);
+    }
+
+    private void LoadTransAnthropicSettings()
+    {
+        var config = _workingCopy.GetProviderConfig("anthropic");
+        TransAnthropicBaseUrlTextBox.Text = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.anthropic.com" : config.BaseUrl;
+        TransAnthropicApiKeyBox.Password = config.ApiKey;
+        TransAnthropicModelComboBox.Text = config.TranslationModel;
+        _ = LoadTranslationModelsForComboBoxAsync(TransAnthropicModelComboBox, "anthropic", config.TranslationModel);
+    }
+
     #endregion
 
     #region Model Loading
@@ -298,31 +354,13 @@ public partial class SettingsWindow : Window
             CollectTranslationSettings();
             var tempSettings = BuildTempSettings();
 
-            List<string> models;
-            if (providerName == "ollama")
+            List<string> models = new();
+            var provider = ProviderFactory.CreateTranslationProvider(tempSettings, providerName);
+            if (provider is IModelListable listable)
             {
-                var config = tempSettings.GetProviderConfig("ollama");
-                using var provider = new OllamaTranslationProvider
-                {
-                    BaseUrl = config.BaseUrl,
-                    Model = config.TranslationModel
-                };
-                models = await provider.ListModelsAsync();
+                models = await listable.ListModelsAsync();
             }
-            else if (providerName == "openai" || providerName == "openai-compatible")
-            {
-                using var provider = new OpenAITranslationProvider(providerName, providerName)
-                {
-                    BaseUrl = tempSettings.GetProviderConfig(providerName).BaseUrl,
-                    ApiKey = tempSettings.GetProviderConfig(providerName).ApiKey,
-                    Model = currentModel
-                };
-                models = await provider.ListModelsAsync();
-            }
-            else
-            {
-                return;
-            }
+            (provider as IDisposable)?.Dispose();
 
             var prevText = comboBox.Text;
             comboBox.Items.Clear();
@@ -351,6 +389,8 @@ public partial class SettingsWindow : Window
             "ollama" => OcrOllamaModelComboBox,
             "openai" => OcrOpenAIModelComboBox,
             "openai-compatible" => OcrCompatModelComboBox,
+            "gemini" => OcrGeminiModelComboBox,
+            "anthropic" => OcrAnthropicModelComboBox,
             _ => OcrOllamaModelComboBox
         };
 
@@ -367,11 +407,31 @@ public partial class SettingsWindow : Window
             "ollama" => TransOllamaModelComboBox,
             "openai" => TransOpenAIModelComboBox,
             "openai-compatible" => TransCompatModelComboBox,
+            "gemini" => TransGeminiModelComboBox,
+            "anthropic" => TransAnthropicModelComboBox,
             _ => TransOllamaModelComboBox
         };
 
         CollectTranslationSettings();
         _ = LoadTranslationModelsForComboBoxAsync(targetCombo, providerName, targetCombo.Text);
+    }
+
+    #endregion
+
+    #region OpenAI-Compatible Presets
+
+    /// <summary>
+    /// URL presets for the OpenAI-Compatible panels (OCR + translation).
+    /// Button.Tag carries the base URL to apply.
+    /// </summary>
+    private void CompatPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string url) return;
+
+        if (_workingCopy.TranslationProvider == "openai-compatible")
+            TransCompatBaseUrlTextBox.Text = url;
+        if (_workingCopy.OcrProvider == "openai-compatible")
+            OcrCompatBaseUrlTextBox.Text = url;
     }
 
     #endregion
@@ -477,6 +537,22 @@ public partial class SettingsWindow : Window
                     c.OcrModel = OcrCompatModelComboBox.Text.Trim();
                     break;
                 }
+            case "gemini":
+                {
+                    var c = _workingCopy.GetProviderConfig("gemini");
+                    c.BaseUrl = OcrGeminiBaseUrlTextBox.Text.Trim();
+                    c.ApiKey = OcrGeminiApiKeyBox.Password.Trim();
+                    c.OcrModel = OcrGeminiModelComboBox.Text.Trim();
+                    break;
+                }
+            case "anthropic":
+                {
+                    var c = _workingCopy.GetProviderConfig("anthropic");
+                    c.BaseUrl = OcrAnthropicBaseUrlTextBox.Text.Trim();
+                    c.ApiKey = OcrAnthropicApiKeyBox.Password.Trim();
+                    c.OcrModel = OcrAnthropicModelComboBox.Text.Trim();
+                    break;
+                }
         }
     }
 
@@ -520,6 +596,22 @@ public partial class SettingsWindow : Window
                     c.BaseUrl = TransCompatBaseUrlTextBox.Text.Trim();
                     c.ApiKey = TransCompatApiKeyBox.Password.Trim();
                     c.TranslationModel = TransCompatModelComboBox.Text.Trim();
+                    break;
+                }
+            case "gemini":
+                {
+                    var c = _workingCopy.GetProviderConfig("gemini");
+                    c.BaseUrl = TransGeminiBaseUrlTextBox.Text.Trim();
+                    c.ApiKey = TransGeminiApiKeyBox.Password.Trim();
+                    c.TranslationModel = TransGeminiModelComboBox.Text.Trim();
+                    break;
+                }
+            case "anthropic":
+                {
+                    var c = _workingCopy.GetProviderConfig("anthropic");
+                    c.BaseUrl = TransAnthropicBaseUrlTextBox.Text.Trim();
+                    c.ApiKey = TransAnthropicApiKeyBox.Password.Trim();
+                    c.TranslationModel = TransAnthropicModelComboBox.Text.Trim();
                     break;
                 }
         }
@@ -926,7 +1018,7 @@ public partial class SettingsWindow : Window
     private async Task LoadBreakdownModelsForComboBoxAsync()
     {
         var providerName = _workingCopy.Breakdown.Provider;
-        if (providerName is not ("ollama" or "openai" or "openai-compatible"))
+        if (Array.IndexOf(ProviderFactory.AvailableBreakdownProviders, providerName) < 0)
             return;
 
         await LoadTranslationModelsForComboBoxAsync(

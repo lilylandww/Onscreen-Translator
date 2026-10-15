@@ -1410,25 +1410,23 @@ namespace WpfAppTest
         }
         private void UpdateTranslationModelVisibility()
         {
-            bool isOllama = _currentTranslationProvider is OllamaTranslationProvider;
-            bool isOpenAI = _currentTranslationProvider is OpenAITranslationProvider;
-            bool showModels = isOllama || isOpenAI;
+            // All LLM-backed providers (Ollama, OpenAI, compatible, Gemini, Anthropic)
+            // expose a model list; key-only providers (Google/DeepL) do not.
+            bool showModels = _currentTranslationProvider is IModelListable;
             TranslationModelComboBox.Visibility = showModels ? Visibility.Visible : Visibility.Collapsed;
             RefreshTranslationModelsButton.Visibility = showModels ? Visibility.Visible : Visibility.Collapsed;
 
-            if (isOllama)
+            if (showModels)
             {
-                LoadOllamaTranslationModels();
-            }
-            else if (isOpenAI)
-            {
-                LoadOpenAITranslationModels();
+                LoadListableTranslationModels();
             }
         }
 
-        private async void LoadOpenAITranslationModels()
+        private async void LoadListableTranslationModels()
         {
-            if (_currentTranslationProvider is not OpenAITranslationProvider provider) return;
+            if (_currentTranslationProvider is not IModelListable provider) return;
+
+            var currentModel = _settings.GetProviderConfig(_currentTranslationProvider.Name).TranslationModel;
 
             try
             {
@@ -1439,7 +1437,6 @@ namespace WpfAppTest
                     TranslationModelComboBox.Items.Add(model);
                 }
 
-                var currentModel = provider.Model;
                 if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
                 {
                     TranslationModelComboBox.SelectedItem = currentModel;
@@ -1448,13 +1445,19 @@ namespace WpfAppTest
                 {
                     TranslationModelComboBox.SelectedIndex = 0;
                 }
+                else if (!string.IsNullOrEmpty(currentModel))
+                {
+                    // Endpoint reachable but listing unavailable — keep the configured model
+                    TranslationModelComboBox.Items.Add(currentModel);
+                    TranslationModelComboBox.SelectedIndex = 0;
+                }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to load translation models: {ex.Message}");
-                if (_currentTranslationProvider is OpenAITranslationProvider p)
+                if (!string.IsNullOrEmpty(currentModel))
                 {
-                    TranslationModelComboBox.Items.Add(p.Model);
+                    TranslationModelComboBox.Items.Add(currentModel);
                     TranslationModelComboBox.SelectedIndex = 0;
                 }
             }
@@ -1497,37 +1500,6 @@ namespace WpfAppTest
                     OcrModelComboBox.Items.Add(currentModel);
                     OcrModelComboBox.SelectedIndex = 0;
                 }
-            }
-        }
-
-        private async void LoadOllamaTranslationModels()
-        {
-            if (_currentTranslationProvider is not OllamaTranslationProvider ollamaProvider) return;
-
-            try
-            {
-                var models = await ollamaProvider.ListModelsAsync();
-                TranslationModelComboBox.Items.Clear();
-                foreach (var model in models)
-                {
-                    TranslationModelComboBox.Items.Add(model);
-                }
-
-                var currentModel = _settings.GetProviderConfig(_currentTranslationProvider.Name).TranslationModel;
-                if (!string.IsNullOrEmpty(currentModel) && models.Contains(currentModel))
-                {
-                    TranslationModelComboBox.SelectedItem = currentModel;
-                }
-                else if (models.Count > 0)
-                {
-                    TranslationModelComboBox.SelectedIndex = 0;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to load translation models: {ex.Message}");
-                TranslationModelComboBox.Items.Add(_settings.GetProviderConfig(_currentTranslationProvider.Name).TranslationModel);
-                TranslationModelComboBox.SelectedIndex = 0;
             }
         }
 
@@ -1681,30 +1653,35 @@ namespace WpfAppTest
         private void TranslationModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_initializing) return;
-            if (TranslationModelComboBox.SelectedItem is string model)
+            if (TranslationModelComboBox.SelectedItem is not string model) return;
+
+            switch (_currentTranslationProvider)
             {
-                if (_currentTranslationProvider is OllamaTranslationProvider ollamaProvider)
-                {
+                case OllamaTranslationProvider ollamaProvider:
                     ollamaProvider.Model = model;
                     _settings.GetProviderConfig(ollamaProvider.Name).TranslationModel = model;
-                }
-                else if (_currentTranslationProvider is OpenAITranslationProvider openaiProvider)
-                {
+                    break;
+                case OpenAITranslationProvider openaiProvider:
                     openaiProvider.Model = model;
-                    var config = _settings.GetProviderConfig(openaiProvider.Name);
-                    config.TranslationModel = model;
-                }
-                SaveSettings();
-                Debug.WriteLine($"Translation model changed to: {model}");
+                    _settings.GetProviderConfig(openaiProvider.Name).TranslationModel = model;
+                    break;
+                case GeminiTranslationProvider geminiProvider:
+                    geminiProvider.Model = model;
+                    _settings.GetProviderConfig(geminiProvider.Name).TranslationModel = model;
+                    break;
+                case AnthropicTranslationProvider anthropicProvider:
+                    anthropicProvider.Model = model;
+                    _settings.GetProviderConfig(anthropicProvider.Name).TranslationModel = model;
+                    break;
             }
+            SaveSettings();
+            Debug.WriteLine($"Translation model changed to: {model}");
         }
 
         private void RefreshTranslationModelsButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_currentTranslationProvider is OllamaTranslationProvider)
-                LoadOllamaTranslationModels();
-            else if (_currentTranslationProvider is OpenAITranslationProvider)
-                LoadOpenAITranslationModels();
+            if (_currentTranslationProvider is IModelListable)
+                LoadListableTranslationModels();
         }
 
         private void SearchToggleButton_Checked(object sender, RoutedEventArgs e)
