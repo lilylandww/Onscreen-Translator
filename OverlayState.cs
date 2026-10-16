@@ -46,4 +46,24 @@ public class OverlayState
 
     /// <summary>Canvas Y position for the overlay text block.</summary>
     public double Y { get; set; }
+
+    /// <summary>User drag offset (DIP) applied on top of the region-anchored X position.</summary>
+    public double CardOffsetX { get; set; }
+
+    /// <summary>User drag offset (DIP) applied on top of the region-anchored Y position.</summary>
+    public double CardOffsetY { get; set; }
+
+    /// <summary>Deep-copies the state (used for overlay-mode redraw snapshots).</summary>
+    public OverlayState Clone() => new()
+    {
+        OcrText = OcrText,
+        Translation = Translation,
+        FuriganaSegments = new List<FuriganaSegment>(FuriganaSegments),
+        CurrentView = CurrentView,
+        Region = Region,
+        X = X,
+        Y = Y,
+        CardOffsetX = CardOffsetX,
+        CardOffsetY = CardOffsetY
+    };
 }

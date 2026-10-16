@@ -7,6 +7,9 @@ using System.Windows.Interop;
 
 namespace WpfAppTest
 {
+    /// <summary>Extra tray context-menu entry (appended after Settings).</summary>
+    public sealed record TrayMenuItem(int Id, string Label, Action Action);
+
     public class SystemTrayIcon : IDisposable
     {
         private readonly IntPtr _hWnd;
@@ -15,6 +18,7 @@ namespace WpfAppTest
         private readonly Action? _onRestore;
         private readonly Action? _onSettings;
         private readonly Action? _onExit;
+        private readonly IReadOnlyList<TrayMenuItem> _extraItems;
         private readonly uint _taskbarCreatedMessage;
         private bool _disposed;
         private bool _added;
@@ -99,12 +103,13 @@ namespace WpfAppTest
 
         public event EventHandler? OnIconClicked;
 
-        public SystemTrayIcon(Icon icon, string toolTipText, Action? onRestore = null, Action? onSettings = null, Action? onExit = null)
+        public SystemTrayIcon(Icon icon, string toolTipText, Action? onRestore = null, Action? onSettings = null, Action? onExit = null, IReadOnlyList<TrayMenuItem>? extraItems = null)
         {
             _hIcon = icon.Handle;
             _onRestore = onRestore;
             _onSettings = onSettings;
             _onExit = onExit;
+            _extraItems = extraItems ?? Array.Empty<TrayMenuItem>();
             _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
 
             var parameters = new HwndSourceParameters(WindowClass)
@@ -177,6 +182,16 @@ namespace WpfAppTest
                     case IDM_EXIT:
                         _onExit?.Invoke();
                         break;
+                    default:
+                        foreach (var item in _extraItems)
+                        {
+                            if (item.Id == menuId)
+                            {
+                                item.Action.Invoke();
+                                break;
+                            }
+                        }
+                        break;
                 }
             }
 
@@ -188,6 +203,10 @@ namespace WpfAppTest
             IntPtr hMenu = CreatePopupMenu();
             AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_RESTORE, "Restore");
             AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_SETTINGS, "Settings...");
+            foreach (var item in _extraItems)
+            {
+                AppendMenu(hMenu, MFT_STRING, (UIntPtr)item.Id, item.Label);
+            }
             AppendMenu(hMenu, MFT_SEPARATOR, UIntPtr.Zero, "");
             AppendMenu(hMenu, MFT_STRING, (UIntPtr)IDM_EXIT, "Exit");
 
@@ -198,12 +217,26 @@ namespace WpfAppTest
 
             DestroyMenu(hMenu);
 
+            // TPM_RETURNCMD returns the selection directly — WM_COMMAND is never
+            // posted, so extra items must be dispatched here (the WM_COMMAND
+            // branch in WndProc is only a fallback).
             if (cmd == IDM_RESTORE)
                 _onRestore?.Invoke();
             else if (cmd == IDM_SETTINGS)
                 _onSettings?.Invoke();
             else if (cmd == IDM_EXIT)
                 _onExit?.Invoke();
+            else
+            {
+                foreach (var item in _extraItems)
+                {
+                    if (item.Id == cmd)
+                    {
+                        item.Action.Invoke();
+                        break;
+                    }
+                }
+            }
         }
 
         public void Show()
