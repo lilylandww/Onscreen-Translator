@@ -5,8 +5,8 @@ J2E OCR Translator is a Windows desktop application built with WPF (.NET 8) for 
 ## Features
 
 - **Screen Region Selection:** Select any region of your screen to capture and extract Japanese text.
-- **OCR Models:** Toggle between Manga OCR and a custom OCR model for text recognition.
-- **Translation:** Instantly translate recognized Japanese text to English using Google Translate or DeepL.
+- **OCR Models:** Toggle between Manga OCR and a custom OCR model for text recognition. LLM OCR via Ollama, OpenAI, Google Gemini, Anthropic Claude, or any OpenAI-compatible endpoint.
+- **Translation:** Instantly translate recognized Japanese text to English using Google Translate, DeepL, Ollama, OpenAI, Google Gemini, Anthropic Claude, or any OpenAI-compatible endpoint (Groq, OpenRouter, LM Studio, ...).
 - **Dictionary Lookup:** Search for Japanese words and view readings and meanings.
 - **Furigana (Ruby Readings):** Display hiragana phonetic readings above kanji in the overlay. Uses a Python sidecar with SudachiPy for dictionary words and FLFL (1B LLM) for out-of-vocabulary tokens. Falls back to Ollama when FLFL is too slow.
 - **Editable Results:** Edit OCR results and re-translate as needed.
@@ -125,6 +125,7 @@ dotnet run --project WpfAppTest.csproj
 - **Furigana:** Right-click the overlay or press **F** to cycle through views:
   - **Translation** (default) — English translation
   - **Furigana** — hiragana readings above kanji
+  - **Breakdown** — vocab + grammar parts (hover for meanings) via LLM
   - **Original** — raw OCR text
 
 ### Overlay Mode
@@ -162,6 +163,7 @@ Limitations: exclusive-fullscreen games do not render layered windows on top
 - `LowLevelInputMonitor.cs`: System-wide mouse/keyboard hooks for overlay behavior.
 - `RegionChangeWatcher.cs`: Pixel-diff detection of watched-region changes.
 - `FuriganaServiceManager.cs`: Sidecar lifecycle, health checks, auto-degradation.
+- `Providers/`: OCR, translation, and sentence-breakdown providers (Ollama, OpenAI, OpenAI-compatible, Google Gemini, Anthropic Claude).
 - `Providers/Furigana/`: Furigana provider interfaces and HTTP client.
 - `furigana-service/`: Python FastAPI sidecar (SudachiPy + FLFL).
 - `custom_ocr/`: Python custom OCR implementation.

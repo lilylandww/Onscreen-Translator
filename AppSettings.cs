@@ -87,6 +87,18 @@ public class FuriganaSettings
     public int FlflLatencyThresholdMs { get; set; } = 2000;
 }
 
+public class BreakdownSettings
+{
+    /// <summary>Whether the breakdown LLM call runs after each capture.</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>LLM endpoint provider: "ollama" | "openai" | "openai-compatible" | "gemini" | "anthropic".</summary>
+    public string Provider { get; set; } = "ollama";
+
+    /// <summary>Model name. Empty = use the provider's translation model.</summary>
+    public string Model { get; set; } = "";
+}
+
 public class OverlaySettings
 {
     /// <summary>Whether the always-on-top overlay mode is active (or restored at launch).</summary>
@@ -152,11 +164,28 @@ public class AppSettings
         ["deepl"] = new ProviderConfig
         {
             ApiKey = ""
+        },
+        ["gemini"] = new ProviderConfig
+        {
+            BaseUrl = "https://generativelanguage.googleapis.com/v1beta",
+            ApiKey = "",
+            OcrModel = "gemini-2.0-flash",
+            TranslationModel = "gemini-2.0-flash"
+        },
+        ["anthropic"] = new ProviderConfig
+        {
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "",
+            OcrModel = "claude-sonnet-4-5",
+            TranslationModel = "claude-haiku-4-5"
         }
     };
 
     // Furigana sidecar configuration
     public FuriganaSettings Furigana { get; set; } = new();
+
+    // Sentence breakdown (vocab + grammar) configuration
+    public BreakdownSettings Breakdown { get; set; } = new();
 
     // Overlay (always-on-top, click-through) mode configuration
     public OverlaySettings Overlay { get; set; } = new();

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using WpfAppTest.Providers.Breakdown;
 
 namespace WpfAppTest.Providers;
 
@@ -14,12 +16,18 @@ public static class ProviderFactory
     /// <summary>
     /// All available OCR provider names.
     /// </summary>
-    public static readonly string[] AvailableOcrProviders = ["ollama", "openai", "openai-compatible"];
+    public static readonly string[] AvailableOcrProviders = ["ollama", "openai", "openai-compatible", "gemini", "anthropic"];
 
     /// <summary>
     /// All available translation provider names.
     /// </summary>
-    public static readonly string[] AvailableTranslationProviders = ["google", "deepl", "ollama", "openai", "openai-compatible"];
+    public static readonly string[] AvailableTranslationProviders = ["google", "deepl", "ollama", "openai", "openai-compatible", "gemini", "anthropic"];
+
+    /// <summary>
+    /// Providers able to run the sentence-breakdown LLM call (LLM endpoints only —
+    /// Google/DeepL cannot produce structured breakdowns).
+    /// </summary>
+    public static readonly string[] AvailableBreakdownProviders = ["ollama", "openai", "openai-compatible", "gemini", "anthropic"];
 
     /// <summary>
     /// Display names for OCR providers.
@@ -28,7 +36,9 @@ public static class ProviderFactory
     {
         ["ollama"] = "Ollama (Local)",
         ["openai"] = "OpenAI",
-        ["openai-compatible"] = "OpenAI-Compatible"
+        ["openai-compatible"] = "OpenAI-Compatible",
+        ["gemini"] = "Google Gemini",
+        ["anthropic"] = "Anthropic Claude"
     };
 
     /// <summary>
@@ -40,7 +50,21 @@ public static class ProviderFactory
         ["deepl"] = "DeepL",
         ["ollama"] = "Ollama (Local)",
         ["openai"] = "OpenAI",
-        ["openai-compatible"] = "OpenAI-Compatible"
+        ["openai-compatible"] = "OpenAI-Compatible",
+        ["gemini"] = "Google Gemini",
+        ["anthropic"] = "Anthropic Claude"
+    };
+
+    /// <summary>
+    /// Display names for breakdown providers.
+    /// </summary>
+    public static readonly Dictionary<string, string> BreakdownProviderDisplayNames = new()
+    {
+        ["ollama"] = "Ollama (Local)",
+        ["openai"] = "OpenAI",
+        ["openai-compatible"] = "OpenAI-Compatible",
+        ["gemini"] = "Google Gemini",
+        ["anthropic"] = "Anthropic Claude"
     };
 
     /// <summary>
@@ -74,6 +98,18 @@ public static class ProviderFactory
             "openai-compatible" => new OpenAIOCRProvider("openai-compatible", "OpenAI-Compatible")
             {
                 BaseUrl = config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.OcrModel
+            },
+            "gemini" => new GeminiOCRProvider
+            {
+                BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.OcrModel
+            },
+            "anthropic" => new AnthropicOCRProvider
+            {
+                BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.anthropic.com" : config.BaseUrl,
                 ApiKey = config.ApiKey,
                 Model = config.OcrModel
             },
@@ -126,6 +162,24 @@ public static class ProviderFactory
             Model = compatConfig.TranslationModel
         });
 
+        // Google Gemini
+        var geminiConfig = settings.GetProviderConfig("gemini");
+        providers.Add(new GeminiTranslationProvider
+        {
+            BaseUrl = string.IsNullOrEmpty(geminiConfig.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiConfig.BaseUrl,
+            ApiKey = geminiConfig.ApiKey,
+            Model = geminiConfig.TranslationModel
+        });
+
+        // Anthropic Claude
+        var anthropicConfig = settings.GetProviderConfig("anthropic");
+        providers.Add(new AnthropicTranslationProvider
+        {
+            BaseUrl = string.IsNullOrEmpty(anthropicConfig.BaseUrl) ? "https://api.anthropic.com" : anthropicConfig.BaseUrl,
+            ApiKey = anthropicConfig.ApiKey,
+            Model = anthropicConfig.TranslationModel
+        });
+
         return providers;
     }
 
@@ -157,9 +211,89 @@ public static class ProviderFactory
                 ApiKey = config.ApiKey,
                 Model = config.TranslationModel
             },
+            "gemini" => new GeminiTranslationProvider
+            {
+                BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.TranslationModel
+            },
+            "anthropic" => new AnthropicTranslationProvider
+            {
+                BaseUrl = string.IsNullOrEmpty(config.BaseUrl) ? "https://api.anthropic.com" : config.BaseUrl,
+                ApiKey = config.ApiKey,
+                Model = config.TranslationModel
+            },
             _ => throw new ArgumentException($"Unknown translation provider: {providerName}", nameof(providerName))
         };
     }
+
+    /// <summary>
+    /// Ollama's OpenAI-compatible routes live under <c>/v1</c> (its native API is
+    /// <c>/api/*</c>), so a plain <c>host:port</c> Ollama URL gets <c>/v1</c>
+    /// appended before it is used as a chat-completions base address.
+    /// Non-Ollama providers are returned unchanged (their URLs are expected to
+    /// already include the version path).
+    /// </summary>
+    public static string WithOpenAIV1Path(string providerName, string baseUrl)
+    {
+        if (!string.Equals(providerName, "ollama", StringComparison.OrdinalIgnoreCase))
+            return baseUrl;
+
+        var trimmed = baseUrl.TrimEnd('/');
+        return trimmed.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : trimmed + "/v1";
+    }
+
+    /// <summary>
+    /// Creates the sentence-breakdown provider from settings. This is the single
+    /// place where the breakdown endpoint/model is resolved: uses
+    /// <c>Breakdown.Model</c> (falling back to the chosen provider's translation
+    /// model when empty), applies Ollama <c>/v1</c> normalization, and defaults a
+    /// blank base URL per provider. Returns null when the target endpoint is
+    /// unconfigured — callers fall back to plain rendering.
+    /// </summary>
+    public static ISentenceBreakdownProvider? CreateBreakdownProvider(AppSettings settings)
+    {
+        var breakdown = settings.Breakdown;
+        var providerName = breakdown.Provider;
+        if (Array.IndexOf(AvailableBreakdownProviders, providerName) < 0)
+            providerName = "ollama";
+
+        var config = settings.GetProviderConfig(providerName);
+        var model = string.IsNullOrEmpty(breakdown.Model) ? config.TranslationModel : breakdown.Model;
+        var rawBaseUrl = string.IsNullOrEmpty(config.BaseUrl)
+            ? DefaultBaseUrl(providerName)
+            : config.BaseUrl;
+        var baseUrl = WithOpenAIV1Path(providerName, rawBaseUrl);
+
+        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model))
+        {
+            Debug.WriteLine("[Breakdown] Cannot create provider — endpoint/model not configured.");
+            return null;
+        }
+
+        ISentenceBreakdownProvider provider = providerName switch
+        {
+            "gemini" => new GeminiSentenceBreakdownProvider(baseUrl, config.ApiKey, model),
+            "anthropic" => new AnthropicSentenceBreakdownProvider(baseUrl, config.ApiKey, model),
+            _ => new LLMSentenceBreakdownProvider(baseUrl, config.ApiKey, model)
+        };
+
+        return provider;
+    }
+
+    /// <summary>
+    /// Default base URL for a provider when its config leaves it blank.
+    /// Returns "" for Ollama/OpenAI-compatible (a blank URL means unconfigured).
+    /// </summary>
+    private static string DefaultBaseUrl(string providerName) => providerName switch
+    {
+        "openai" => "https://api.openai.com/v1",
+        "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+        "anthropic" => "https://api.anthropic.com",
+        _ => ""
+    };
 
     /// <summary>
     /// Lists available models for the given provider using the IModelListable interface.
